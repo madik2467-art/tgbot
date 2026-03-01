@@ -420,3 +420,11 @@ def health():
 
 logger.info("Flask app initialized successfully")
 
+@app.route('/api/debug')
+def debug():
+    import os
+    return {
+        'env_vars': list(os.environ.keys()),
+        'database_url_exists': 'DATABASE_URL' in os.environ,
+        'database_url_value': os.getenv('DATABASE_URL', 'NOT_SET')[:20] + '...' if os.getenv('DATABASE_URL') else 'NOT_SET'
+    }

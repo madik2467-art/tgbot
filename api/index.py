@@ -23,7 +23,7 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 
 if not DATABASE_URL:
     # Временно захардкожено (потом убрать!)
-    DATABASE_URL = 'postgresql://postgres:train-luck-stun-apple@db.wgxgpjpfjhigqroncess.supabase.co:5432/postgres'
+    DATABASE_URL = 'postgresql://postgres:train-luck-stun-apple@db.wgxgpjpfjhigqronecss.supabase.co:5432/postgres?sslmode=require'
 
 # Для проверки — выводим в логи (пароль замаскирован)
 print(f"DATABASE_URL loaded: {DATABASE_URL[:30]}...")
@@ -434,4 +434,5 @@ def debug():
         'env_keys': list(os.environ.keys()),
         'sample_vars': env_vars
     })
+
 

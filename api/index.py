@@ -423,8 +423,14 @@ logger.info("Flask app initialized successfully")
 @app.route('/api/debug')
 def debug():
     import os
-    return {
-        'env_vars': list(os.environ.keys()),
+    env_vars = {k: v[:30] + '...' if v and len(v) > 30 else v 
+                for k, v in os.environ.items() 
+                if not k.lower().startswith('secret') and not k.lower().startswith('token')}
+    
+    return jsonify({
+        'total_env_vars': len(os.environ),
+        'database_url_raw': os.getenv('DATABASE_URL'),
         'database_url_exists': 'DATABASE_URL' in os.environ,
-        'database_url_value': os.getenv('DATABASE_URL', 'NOT_SET')[:20] + '...' if os.getenv('DATABASE_URL') else 'NOT_SET'
-    }
+        'env_keys': list(os.environ.keys()),
+        'sample_vars': env_vars
+    })

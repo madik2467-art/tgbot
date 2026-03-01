@@ -19,8 +19,14 @@ logger.info(f"Current directory: {os.getcwd()}")
 logger.info(f"Files in directory: {os.listdir('.')}")
 
 # Supabase PostgreSQL URL
-DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:train-luck-stun-apple@db.wgxgpjpfjhigqroncess.supabase.co:5432/postgres')
-logger.info(f"Database URL (masked): {DATABASE_URL[:20]}...")
+DATABASE_URL = os.getenv('DATABASE_URL')
+
+if not DATABASE_URL:
+    # Временно захардкожено (потом убрать!)
+    DATABASE_URL = 'postgresql://postgres:train-luck-stun-apple@db.wgxgpjpfjhigqroncess.supabase.co:5432/postgres'
+
+# Для проверки — выводим в логи (пароль замаскирован)
+print(f"DATABASE_URL loaded: {DATABASE_URL[:30]}...")
 
 # Импортируем psycopg2
 try:
@@ -413,3 +419,4 @@ def health():
     })
 
 logger.info("Flask app initialized successfully")
+

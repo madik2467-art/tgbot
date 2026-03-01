@@ -1,100 +1,130 @@
-# api/index.py — Vercel + Supabase (Flask)
+# api/index.py — Vercel + Supabase (Flask) с детальным логированием
 from flask import Flask, request, jsonify
 import os
 import sys
+import traceback
 from datetime import datetime
-
-# Добавляем корень проекта в путь для импортов
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 app = Flask(__name__)
 
+# Детальное логирование
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+logger.info("=" * 50)
+logger.info("Starting RentBot API...")
+logger.info(f"Python version: {sys.version}")
+logger.info(f"Current directory: {os.getcwd()}")
+logger.info(f"Files in directory: {os.listdir('.')}")
+
 # Supabase PostgreSQL URL
 DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:train-luck-stun-apple@db.wgxgpjpfjhigqroncess.supabase.co:5432/postgres')
+logger.info(f"Database URL (masked): {DATABASE_URL[:20]}...")
 
-# Импортируем psycopg2 здесь, чтобы ошибка была видна в логах
+# Импортируем psycopg2
 try:
     import psycopg2
     from psycopg2.extras import RealDictCursor
+    logger.info("Successfully imported psycopg2")
 except ImportError as e:
-    print(f"Failed to import psycopg2: {e}")
-    # Fallback для случая если psycopg2 не установлен
+    logger.error(f"Failed to import psycopg2: {e}")
     psycopg2 = None
 
 def get_db():
     """Получить соединение с БД"""
     if psycopg2 is None:
         raise Exception("psycopg2 not installed")
-    conn = psycopg2.connect(DATABASE_URL)
-    conn.cursor_factory = RealDictCursor
-    return conn
+    
+    try:
+        logger.info("Connecting to database...")
+        conn = psycopg2.connect(DATABASE_URL)
+        conn.cursor_factory = RealDictCursor
+        logger.info("Database connection successful")
+        return conn
+    except Exception as e:
+        logger.error(f"Database connection failed: {e}")
+        raise
 
 def init_db():
     """Инициализация базы данных"""
     if psycopg2 is None:
-        return
+        logger.error("Cannot init DB - psycopg2 not available")
+        return False
+    
+    try:
+        logger.info("Initializing database...")
+        conn = psycopg2.connect(DATABASE_URL)
+        c = conn.cursor()
         
-    conn = psycopg2.connect(DATABASE_URL)
-    c = conn.cursor()
-    
-    # Создаём таблицы
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS inventory (
-            id SERIAL PRIMARY KEY,
-            name TEXT UNIQUE,
-            sport TEXT,
-            total_quantity INTEGER,
-            available_quantity INTEGER,
-            price_per_hour REAL DEFAULT 0,
-            price_per_day REAL DEFAULT 0
-        )
-    ''')
-    
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS bookings (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT,
-            item_id INTEGER,
-            quantity INTEGER,
-            rent_type TEXT,
-            booking_date TEXT,
-            booking_time TEXT,
-            duration INTEGER,
-            return_datetime TEXT,
-            total_price REAL,
-            booked_at TEXT,
-            reminder_sent INTEGER DEFAULT 0,
-            returned INTEGER DEFAULT 0
-        )
-    ''')
-    
-    # Проверяем, есть ли данные
-    c.execute("SELECT COUNT(*) FROM inventory")
-    if c.fetchone()[0] == 0:
-        items = [
-            ("Футбольный мяч", "футбол", 10, 10, 500, 2500),
-            ("Теннисная ракетка", "теннис", 8, 8, 750, 4000),
-            ("Баскетбольный мяч", "баскетбол", 6, 6, 500, 2500),
-            ("Горный велосипед", "вело", 4, 4, 1500, 7500),
-            ("Хоккейные коньки", "хоккей", 12, 12, 1000, 5000),
-            ("Скейтборд", "скейт", 5, 5, 750, 3500),
-            ("Роликовые коньки", "ролики", 15, 15, 750, 3500),
-            ("Гантели 10 кг", "фитнес", 20, 20, 250, 1500),
-        ]
-        c.executemany(
-            "INSERT INTO inventory (name, sport, total_quantity, available_quantity, price_per_hour, price_per_day) VALUES (%s, %s, %s, %s, %s, %s)",
-            items
-        )
-        conn.commit()
-    conn.close()
+        # Создаём таблицы
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS inventory (
+                id SERIAL PRIMARY KEY,
+                name TEXT UNIQUE,
+                sport TEXT,
+                total_quantity INTEGER,
+                available_quantity INTEGER,
+                price_per_hour REAL DEFAULT 0,
+                price_per_day REAL DEFAULT 0
+            )
+        ''')
+        
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS bookings (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                item_id INTEGER,
+                quantity INTEGER,
+                rent_type TEXT,
+                booking_date TEXT,
+                booking_time TEXT,
+                duration INTEGER,
+                return_datetime TEXT,
+                total_price REAL,
+                booked_at TEXT,
+                reminder_sent INTEGER DEFAULT 0,
+                returned INTEGER DEFAULT 0
+            )
+        ''')
+        
+        # Проверяем, есть ли данные
+        c.execute("SELECT COUNT(*) FROM inventory")
+        count = c.fetchone()[0]
+        logger.info(f"Inventory count: {count}")
+        
+        if count == 0:
+            logger.info("Seeding initial data...")
+            items = [
+                ("Футбольный мяч", "футбол", 10, 10, 500, 2500),
+                ("Теннисная ракетка", "теннис", 8, 8, 750, 4000),
+                ("Баскетбольный мяч", "баскетбол", 6, 6, 500, 2500),
+                ("Горный велосипед", "вело", 4, 4, 1500, 7500),
+                ("Хоккейные коньки", "хоккей", 12, 12, 1000, 5000),
+                ("Скейтборд", "скейт", 5, 5, 750, 3500),
+                ("Роликовые коньки", "ролики", 15, 15, 750, 3500),
+                ("Гантели 10 кг", "фитнес", 20, 20, 250, 1500),
+            ]
+            c.executemany(
+                "INSERT INTO inventory (name, sport, total_quantity, available_quantity, price_per_hour, price_per_day) VALUES (%s, %s, %s, %s, %s, %s)",
+                items
+            )
+            conn.commit()
+            logger.info("Data seeded successfully")
+        
+        conn.close()
+        logger.info("Database initialization completed")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+        logger.error(traceback.format_exc())
+        return False
 
 # Инициализация при импорте
-try:
-    init_db()
-except Exception as e:
-    print(f"DB init error: {e}")
+init_db()
 
-# HTML страница
+# HTML страница (сокращённая для теста)
 HTML_PAGE = """
 <!DOCTYPE html>
 <html lang="ru">
@@ -275,6 +305,7 @@ def index():
 @app.route('/api/stats')
 def get_stats():
     try:
+        logger.info("API: /api/stats called")
         conn = get_db()
         c = conn.cursor()
         
@@ -289,19 +320,26 @@ def get_stats():
         overdue = c.fetchone()[0]
         
         conn.close()
-        return jsonify({
+        
+        result = {
             "total_items": total_items or 0,
             "active_bookings": active or 0,
             "total_revenue": float(revenue) if revenue else 0,
             "available_items": int(available) if available else 0,
             "overdue_bookings": overdue or 0
-        })
+        }
+        logger.info(f"API: /api/stats returning: {result}")
+        return jsonify(result)
+        
     except Exception as e:
+        logger.error(f"API Error in /api/stats: {e}")
+        logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/bookings')
 def get_bookings():
     try:
+        logger.info("API: /api/bookings called")
         conn = get_db()
         c = conn.cursor()
         c.execute("""
@@ -312,13 +350,19 @@ def get_bookings():
         """)
         rows = c.fetchall()
         conn.close()
-        return jsonify([dict(r) for r in rows])
+        result = [dict(r) for r in rows]
+        logger.info(f"API: /api/bookings returning {len(result)} rows")
+        return jsonify(result)
+        
     except Exception as e:
+        logger.error(f"API Error in /api/bookings: {e}")
+        logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/bookings/<int:booking_id>/return', methods=['POST'])
 def return_booking(booking_id):
     try:
+        logger.info(f"API: /api/bookings/{booking_id}/return called")
         conn = get_db()
         c = conn.cursor()
         
@@ -333,18 +377,39 @@ def return_booking(booking_id):
         conn.commit()
         conn.close()
         
+        logger.info(f"API: Booking {booking_id} returned successfully")
         return jsonify({"ok": True})
+        
     except Exception as e:
+        logger.error(f"API Error in return_booking: {e}")
+        logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/inventory')
 def get_inventory():
     try:
+        logger.info("API: /api/inventory called")
         conn = get_db()
         c = conn.cursor()
         c.execute("SELECT * FROM inventory ORDER BY id")
         rows = c.fetchall()
         conn.close()
-        return jsonify([dict(r) for r in rows])
+        result = [dict(r) for r in rows]
+        logger.info(f"API: /api/inventory returning {len(result)} rows")
+        return jsonify(result)
+        
     except Exception as e:
+        logger.error(f"API Error in /api/inventory: {e}")
+        logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
+
+# Для теста - простой endpoint
+@app.route('/api/health')
+def health():
+    return jsonify({
+        "status": "ok",
+        "psycopg2": psycopg2 is not None,
+        "database_url_set": DATABASE_URL != 'postgresql://postgres:train-luck-stun-apple@db.wgxgpjpfjhigqroncess.supabase.co:5432/postgres'
+    })
+
+logger.info("Flask app initialized successfully")

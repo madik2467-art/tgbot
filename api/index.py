@@ -1,22 +1,98 @@
-# api/index.py — Vercel + PostgreSQL
+# api/index.py — Vercel + Supabase (Flask)
 from flask import Flask, request, jsonify
-import psycopg2
-from psycopg2.extras import RealDictCursor
 import os
-from datetime import datetime
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+from datetime import datetime
 
-from database import get_db_sync, init_db_sync
+# Добавляем корень проекта в путь для импортов
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
 app = Flask(__name__)
 
-# Supabase URL из переменной окружения
-DATABASE_URL = os.getenv('postgresql://postgres:RPQmesjKMLDK2VQ4@db.qeerhklikiefruuqcwds.supabase.co:5432/postgres')
+# Supabase PostgreSQL URL
+DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:train-luck-stun-apple@db.wgxgpjpfjhigqroncess.supabase.co:5432/postgres')
 
+# Импортируем psycopg2 здесь, чтобы ошибка была видна в логах
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+except ImportError as e:
+    print(f"Failed to import psycopg2: {e}")
+    # Fallback для случая если psycopg2 не установлен
+    psycopg2 = None
 
 def get_db():
+    """Получить соединение с БД"""
+    if psycopg2 is None:
+        raise Exception("psycopg2 not installed")
     conn = psycopg2.connect(DATABASE_URL)
+    conn.cursor_factory = RealDictCursor
     return conn
+
+def init_db():
+    """Инициализация базы данных"""
+    if psycopg2 is None:
+        return
+        
+    conn = psycopg2.connect(DATABASE_URL)
+    c = conn.cursor()
+    
+    # Создаём таблицы
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS inventory (
+            id SERIAL PRIMARY KEY,
+            name TEXT UNIQUE,
+            sport TEXT,
+            total_quantity INTEGER,
+            available_quantity INTEGER,
+            price_per_hour REAL DEFAULT 0,
+            price_per_day REAL DEFAULT 0
+        )
+    ''')
+    
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS bookings (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            item_id INTEGER,
+            quantity INTEGER,
+            rent_type TEXT,
+            booking_date TEXT,
+            booking_time TEXT,
+            duration INTEGER,
+            return_datetime TEXT,
+            total_price REAL,
+            booked_at TEXT,
+            reminder_sent INTEGER DEFAULT 0,
+            returned INTEGER DEFAULT 0
+        )
+    ''')
+    
+    # Проверяем, есть ли данные
+    c.execute("SELECT COUNT(*) FROM inventory")
+    if c.fetchone()[0] == 0:
+        items = [
+            ("Футбольный мяч", "футбол", 10, 10, 500, 2500),
+            ("Теннисная ракетка", "теннис", 8, 8, 750, 4000),
+            ("Баскетбольный мяч", "баскетбол", 6, 6, 500, 2500),
+            ("Горный велосипед", "вело", 4, 4, 1500, 7500),
+            ("Хоккейные коньки", "хоккей", 12, 12, 1000, 5000),
+            ("Скейтборд", "скейт", 5, 5, 750, 3500),
+            ("Роликовые коньки", "ролики", 15, 15, 750, 3500),
+            ("Гантели 10 кг", "фитнес", 20, 20, 250, 1500),
+        ]
+        c.executemany(
+            "INSERT INTO inventory (name, sport, total_quantity, available_quantity, price_per_hour, price_per_day) VALUES (%s, %s, %s, %s, %s, %s)",
+            items
+        )
+        conn.commit()
+    conn.close()
+
+# Инициализация при импорте
+try:
+    init_db()
+except Exception as e:
+    print(f"DB init error: {e}")
 
 # HTML страница
 HTML_PAGE = """
@@ -198,74 +274,77 @@ def index():
 
 @app.route('/api/stats')
 def get_stats():
-    conn = get_db()
-    c = conn.cursor()
-    
-    c.execute("SELECT COUNT(*), SUM(available_quantity) FROM inventory")
-    total_items, available = c.fetchone()
-    
-    c.execute("SELECT COUNT(*), SUM(total_price) FROM bookings WHERE returned = 0")
-    active, revenue = c.fetchone()
-    
-    now = datetime.now().isoformat()
-    c.execute("SELECT COUNT(*) FROM bookings WHERE returned = 0 AND return_datetime < %s", (now,))
-    overdue = c.fetchone()[0]
-    
-    conn.close()
-    return jsonify({
-        "total_items": total_items or 0,
-        "active_bookings": active or 0,
-        "total_revenue": revenue or 0,
-        "available_items": available or 0,
-        "overdue_bookings": overdue or 0
-    })
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        c.execute("SELECT COUNT(*), COALESCE(SUM(available_quantity), 0) FROM inventory")
+        total_items, available = c.fetchone()
+        
+        c.execute("SELECT COUNT(*), COALESCE(SUM(total_price), 0) FROM bookings WHERE returned = 0")
+        active, revenue = c.fetchone()
+        
+        now = datetime.now().isoformat()
+        c.execute("SELECT COUNT(*) FROM bookings WHERE returned = 0 AND return_datetime < %s", (now,))
+        overdue = c.fetchone()[0]
+        
+        conn.close()
+        return jsonify({
+            "total_items": total_items or 0,
+            "active_bookings": active or 0,
+            "total_revenue": float(revenue) if revenue else 0,
+            "available_items": int(available) if available else 0,
+            "overdue_bookings": overdue or 0
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/bookings')
 def get_bookings():
-    conn = get_db()
-    c = conn.cursor(cursor_factory=RealDictCursor)
-    c.execute("""
-        SELECT b.*, i.name as item_name 
-        FROM bookings b 
-        JOIN inventory i ON b.item_id = i.id 
-        ORDER BY b.booked_at DESC
-    """)
-    rows = c.fetchall()
-    conn.close()
-    return jsonify([dict(r) for r in rows])
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("""
+            SELECT b.*, i.name as item_name 
+            FROM bookings b 
+            JOIN inventory i ON b.item_id = i.id 
+            ORDER BY b.booked_at DESC
+        """)
+        rows = c.fetchall()
+        conn.close()
+        return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/bookings/<int:booking_id>/return', methods=['POST'])
 def return_booking(booking_id):
-    conn = get_db()
-    c = conn.cursor()
-    
-    c.execute("SELECT item_id, quantity FROM bookings WHERE id = %s AND returned = 0", (booking_id,))
-    r = c.fetchone()
-    if not r:
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        c.execute("SELECT item_id, quantity FROM bookings WHERE id = %s AND returned = 0", (booking_id,))
+        r = c.fetchone()
+        if not r:
+            conn.close()
+            return jsonify({"error": "Not found"}), 404
+        
+        c.execute("UPDATE inventory SET available_quantity = available_quantity + %s WHERE id = %s", (r['quantity'], r['item_id']))
+        c.execute("UPDATE bookings SET returned = 1 WHERE id = %s", (booking_id,))
+        conn.commit()
         conn.close()
-        return jsonify({"error": "Not found"}), 404
-    
-    c.execute("UPDATE inventory SET available_quantity = available_quantity + %s WHERE id = %s", (r[1], r[0]))
-    c.execute("UPDATE bookings SET returned = 1 WHERE id = %s", (booking_id,))
-    conn.commit()
-    conn.close()
-    
-    return jsonify({"ok": True})
+        
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/inventory')
 def get_inventory():
-    conn = get_db()
-    c = conn.cursor(cursor_factory=RealDictCursor)
-    c.execute("SELECT * FROM inventory ORDER BY id")
-    rows = c.fetchall()
-    conn.close()
-    return jsonify([dict(r) for r in rows])
-
-@app.before_request
-def init():
-    if not hasattr(app, 'db_initialized'):
-        init_db_sync()
-        app.db_initialized = True
-
-
-
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT * FROM inventory ORDER BY id")
+        rows = c.fetchall()
+        conn.close()
+        return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

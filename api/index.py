@@ -1,63 +1,20 @@
-# api/index.py
+# api/index.py — Vercel + PostgreSQL
 from flask import Flask, request, jsonify
-import sqlite3
-import json
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import os
 from datetime import datetime
 
 app = Flask(__name__)
 
-DB_PATH = "/tmp/rent_bot.db"
+# Supabase URL из переменной окружения
+DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:train-luck-stun-apple@db.xxx.supabase.co:5432/postgres')
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(DATABASE_URL)
     return conn
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.executescript('''
-        CREATE TABLE IF NOT EXISTS inventory (
-            id INTEGER PRIMARY KEY,
-            name TEXT UNIQUE,
-            sport TEXT,
-            total_quantity INTEGER,
-            available_quantity INTEGER,
-            price_per_hour REAL DEFAULT 0,
-            price_per_day REAL DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS bookings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            item_id INTEGER,
-            quantity INTEGER,
-            rent_type TEXT,
-            booking_date TEXT,
-            booking_time TEXT,
-            duration INTEGER,
-            return_datetime TEXT,
-            total_price REAL,
-            booked_at TEXT,
-            reminder_sent INTEGER DEFAULT 0,
-            returned INTEGER DEFAULT 0
-        );
-    ''')
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM inventory")
-    if cursor.fetchone()[0] == 0:
-        items = [
-            ("Футбольный мяч", "футбол", 10, 10, 500, 2500),
-            ("Теннисная ракетка", "теннис", 8, 8, 750, 4000),
-            ("Баскетбольный мяч", "баскетбол", 6, 6, 500, 2500),
-            ("Горный велосипед", "вело", 4, 4, 1500, 7500),
-            ("Хоккейные коньки", "хоккей", 12, 12, 1000, 5000),
-            ("Скейтборд", "скейт", 5, 5, 750, 3500),
-            ("Роликовые коньки", "ролики", 15, 15, 750, 3500),
-            ("Гантели 10 кг", "фитнес", 20, 20, 250, 1500),
-        ]
-        conn.executemany("INSERT INTO inventory VALUES (NULL, ?, ?, ?, ?, ?, ?)", items)
-        conn.commit()
-    conn.close()
-
+# HTML страница
 HTML_PAGE = """
 <!DOCTYPE html>
 <html lang="ru">
@@ -86,6 +43,14 @@ HTML_PAGE = """
                 <div class="text-gray-400 text-xs">Активные</div>
                 <div class="text-xl font-bold text-blue-400" x-text="stats.active_bookings"></div>
             </div>
+            <div class="glass rounded-xl p-4">
+                <div class="text-gray-400 text-xs">Просрочено</div>
+                <div class="text-xl font-bold" :class="stats.overdue_bookings > 0 ? 'text-red-400' : 'text-green-400'" x-text="stats.overdue_bookings"></div>
+            </div>
+            <div class="glass rounded-xl p-4">
+                <div class="text-gray-400 text-xs">Доступно</div>
+                <div class="text-xl font-bold text-green-400" x-text="stats.available_items"></div>
+            </div>
         </div>
 
         <div class="glass rounded-xl p-1 mb-4 flex">
@@ -94,33 +59,66 @@ HTML_PAGE = """
         </div>
 
         <div x-show="tab === 'bookings'" class="space-y-3">
-            <template x-for="b in bookings" :key="b.id">
-                <div class="glass rounded-xl p-4">
+            <div class="flex gap-2 overflow-x-auto pb-2">
+                <button @click="filter = 'all'" :class="filter === 'all' ? 'bg-purple-600' : 'bg-slate-700'" class="px-4 py-1.5 rounded-full text-xs whitespace-nowrap">Все</button>
+                <button @click="filter = 'active'" :class="filter === 'active' ? 'bg-green-600' : 'bg-slate-700'" class="px-4 py-1.5 rounded-full text-xs whitespace-nowrap">Активные</button>
+                <button @click="filter = 'overdue'" :class="filter === 'overdue' ? 'bg-red-600' : 'bg-slate-700'" class="px-4 py-1.5 rounded-full text-xs whitespace-nowrap">Просроченные</button>
+            </div>
+
+            <template x-for="b in filteredBookings" :key="b.id">
+                <div class="glass rounded-xl p-4" :class="isOverdue(b) && !b.returned ? 'border-red-500/50 border' : ''">
                     <div class="flex justify-between mb-2">
-                        <div class="font-semibold" x-text="b.item_name"></div>
-                        <div class="text-green-400 font-bold"><span x-text="b.total_price.toLocaleString()"></span> ₸</div>
+                        <div>
+                            <div class="font-semibold text-sm" x-text="b.item_name"></div>
+                            <div class="text-xs text-gray-400">ID: <span x-text="b.user_id"></span></div>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-green-400 font-bold"><span x-text="b.total_price.toLocaleString()"></span> ₸</div>
+                            <div class="text-xs text-gray-400"><span x-text="b.quantity"></span> шт.</div>
+                        </div>
+                    </div>
+                    <div class="text-xs text-gray-400 mb-2">
+                        <span x-text="b.booking_date"></span> <span x-text="b.booking_time"></span>
+                        (<span x-text="b.rent_type === 'hour' ? 'час' : 'день'"></span>: <span x-text="b.duration"></span>)
                     </div>
                     <div class="flex justify-between items-center">
-                        <div class="text-xs text-gray-400">ID: <span x-text="b.user_id"></span></div>
-                        <button @click="returnBooking(b.id)" x-show="!b.returned" class="px-3 py-1 bg-blue-600 text-white rounded text-xs">Вернуть</button>
-                        <span x-show="b.returned" class="text-xs text-gray-500">Возвращено</span>
+                        <div class="text-xs" :class="isOverdue(b) && !b.returned ? 'text-red-400 font-medium' : 'text-gray-500'">
+                            Возврат: <span x-text="formatDate(b.return_datetime)"></span>
+                        </div>
+                        <button @click="returnBooking(b.id)" x-show="!b.returned" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors">Вернуть</button>
+                        <span x-show="b.returned" class="text-xs text-gray-500">✓ Возвращено</span>
                     </div>
                 </div>
             </template>
+            
+            <div x-show="filteredBookings.length === 0" class="text-center py-8 text-gray-500 text-sm">
+                Нет бронирований
+            </div>
         </div>
 
         <div x-show="tab === 'inventory'" class="space-y-3">
             <template x-for="item in inventory" :key="item.id">
                 <div class="glass rounded-xl p-4">
-                    <div class="flex justify-between mb-2">
-                        <div class="font-semibold" x-text="item.name"></div>
-                        <div :class="item.available_quantity > 0 ? 'text-green-400' : 'text-red-400'">
-                            <span x-text="item.available_quantity"></span>/<span x-text="item.total_quantity"></span>
+                    <div class="flex justify-between items-start mb-3">
+                        <div>
+                            <div class="font-semibold text-sm" x-text="item.name"></div>
+                            <div class="text-xs text-gray-400 capitalize" x-text="item.sport"></div>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-lg font-bold" :class="item.available_quantity > 0 ? 'text-green-400' : 'text-red-400'">
+                                <span x-text="item.available_quantity"></span><span class="text-gray-500 text-sm">/<span x-text="item.total_quantity"></span></span>
+                            </div>
                         </div>
                     </div>
-                    <div class="text-xs text-gray-400">
-                        Час: <span x-text="item.price_per_hour"></span> ₸ | 
-                        День: <span x-text="item.price_per_day"></span> ₸
+                    <div class="grid grid-cols-2 gap-2 text-xs mb-3">
+                        <div class="bg-slate-800/50 rounded-lg p-2 text-center">
+                            <div class="text-gray-400">Час</div>
+                            <div class="font-medium"><span x-text="item.price_per_hour.toLocaleString()"></span> ₸</div>
+                        </div>
+                        <div class="bg-slate-800/50 rounded-lg p-2 text-center">
+                            <div class="text-gray-400">День</div>
+                            <div class="font-medium"><span x-text="item.price_per_day.toLocaleString()"></span> ₸</div>
+                        </div>
                     </div>
                 </div>
             </template>
@@ -131,7 +129,8 @@ HTML_PAGE = """
         function app() {
             return {
                 tab: 'bookings',
-                stats: { total_revenue: 0, active_bookings: 0 },
+                filter: 'all',
+                stats: { total_revenue: 0, active_bookings: 0, overdue_bookings: 0, available_items: 0 },
                 bookings: [],
                 inventory: [],
                 
@@ -141,20 +140,46 @@ HTML_PAGE = """
                 },
                 
                 async loadData() {
-                    const [s, b, i] = await Promise.all([
-                        fetch('/api/stats').then(r => r.json()),
-                        fetch('/api/bookings').then(r => r.json()),
-                        fetch('/api/inventory').then(r => r.json())
-                    ]);
-                    this.stats = s;
-                    this.bookings = b;
-                    this.inventory = i;
+                    try {
+                        const [s, b, i] = await Promise.all([
+                            fetch('/api/stats').then(r => r.json()),
+                            fetch('/api/bookings').then(r => r.json()),
+                            fetch('/api/inventory').then(r => r.json())
+                        ]);
+                        this.stats = s;
+                        this.bookings = b;
+                        this.inventory = i;
+                    } catch (e) {
+                        console.error('Error:', e);
+                    }
+                },
+
+                get filteredBookings() {
+                    if (this.filter === 'all') return this.bookings;
+                    if (this.filter === 'active') return this.bookings.filter(b => !b.returned && !this.isOverdue(b));
+                    if (this.filter === 'overdue') return this.bookings.filter(b => !b.returned && this.isOverdue(b));
+                    return this.bookings;
+                },
+                
+                isOverdue(b) {
+                    return new Date(b.return_datetime) < new Date() && !b.returned;
+                },
+
+                formatDate(dt) {
+                    const d = new Date(dt);
+                    return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
                 },
                 
                 async returnBooking(id) {
-                    if (!confirm('Вернуть?')) return;
-                    await fetch(`/api/bookings/${id}/return`, { method: 'POST' });
-                    this.loadData();
+                    if (!confirm('Вернуть товар?')) return;
+                    try {
+                        const res = await fetch(`/api/bookings/${id}/return`, { method: 'POST' });
+                        if (res.ok) {
+                            this.loadData();
+                        }
+                    } catch (e) {
+                        console.error('Error:', e);
+                    }
                 }
             }
         }
@@ -165,21 +190,23 @@ HTML_PAGE = """
 
 @app.route('/')
 def index():
-    init_db()
     return HTML_PAGE
 
 @app.route('/api/stats')
 def get_stats():
-    init_db()
     conn = get_db()
     c = conn.cursor()
+    
     c.execute("SELECT COUNT(*), SUM(available_quantity) FROM inventory")
     total_items, available = c.fetchone()
+    
     c.execute("SELECT COUNT(*), SUM(total_price) FROM bookings WHERE returned = 0")
     active, revenue = c.fetchone()
+    
     now = datetime.now().isoformat()
-    c.execute("SELECT COUNT(*) FROM bookings WHERE returned = 0 AND return_datetime < ?", (now,))
+    c.execute("SELECT COUNT(*) FROM bookings WHERE returned = 0 AND return_datetime < %s", (now,))
     overdue = c.fetchone()[0]
+    
     conn.close()
     return jsonify({
         "total_items": total_items or 0,
@@ -191,36 +218,41 @@ def get_stats():
 
 @app.route('/api/bookings')
 def get_bookings():
-    init_db()
     conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT b.*, i.name as item_name FROM bookings b JOIN inventory i ON b.item_id = i.id ORDER BY b.booked_at DESC")
-    rows = [dict(r) for r in c.fetchall()]
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute("""
+        SELECT b.*, i.name as item_name 
+        FROM bookings b 
+        JOIN inventory i ON b.item_id = i.id 
+        ORDER BY b.booked_at DESC
+    """)
+    rows = c.fetchall()
     conn.close()
-    return jsonify(rows)
+    return jsonify([dict(r) for r in rows])
 
 @app.route('/api/bookings/<int:booking_id>/return', methods=['POST'])
 def return_booking(booking_id):
-    init_db()
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT item_id, quantity FROM bookings WHERE id = ? AND returned = 0", (booking_id,))
+    
+    c.execute("SELECT item_id, quantity FROM bookings WHERE id = %s AND returned = 0", (booking_id,))
     r = c.fetchone()
     if not r:
         conn.close()
         return jsonify({"error": "Not found"}), 404
-    c.execute("UPDATE inventory SET available_quantity = available_quantity + ? WHERE id = ?", (r["quantity"], r["item_id"]))
-    c.execute("UPDATE bookings SET returned = 1 WHERE id = ?", (booking_id,))
+    
+    c.execute("UPDATE inventory SET available_quantity = available_quantity + %s WHERE id = %s", (r[1], r[0]))
+    c.execute("UPDATE bookings SET returned = 1 WHERE id = %s", (booking_id,))
     conn.commit()
     conn.close()
+    
     return jsonify({"ok": True})
 
 @app.route('/api/inventory')
 def get_inventory():
-    init_db()
     conn = get_db()
-    c = conn.cursor()
+    c = conn.cursor(cursor_factory=RealDictCursor)
     c.execute("SELECT * FROM inventory ORDER BY id")
-    rows = [dict(r) for r in c.fetchall()]
+    rows = c.fetchall()
     conn.close()
-    return jsonify(rows)
+    return jsonify([dict(r) for r in rows])

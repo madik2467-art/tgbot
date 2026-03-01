@@ -8,7 +8,8 @@ from datetime import datetime
 app = Flask(__name__)
 
 # Supabase URL из переменной окружения
-DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:train-luck-stun-apple@db.xxx.supabase.co:5432/postgres')
+DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:train-luck-stun-apple@db.wgxgpjpfjhigqroncess.supabase.co:5432/postgres')
+
 
 def get_db():
     conn = psycopg2.connect(DATABASE_URL)
@@ -256,3 +257,4 @@ def get_inventory():
     rows = c.fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
+

@@ -415,7 +415,7 @@ def health():
     return jsonify({
         "status": "ok",
         "psycopg2": psycopg2 is not None,
-        "database_url_set": DATABASE_URL != 'postgresql://postgres:train-luck-stun-apple@db.wgxgpjpfjhigqroncess.supabase.co:5432/postgres'
+        "database_url_set": os.getenv('DATABASE_URL') is not None  # ← Исправлено!
     })
 
 logger.info("Flask app initialized successfully")
@@ -434,3 +434,4 @@ def debug():
         'env_keys': list(os.environ.keys()),
         'sample_vars': env_vars
     })
+

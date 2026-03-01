@@ -4,7 +4,10 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
 from datetime import datetime
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
+from database import get_db_sync, init_db_sync
 app = Flask(__name__)
 
 # Supabase URL из переменной окружения
@@ -257,6 +260,12 @@ def get_inventory():
     rows = c.fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
+
+@app.before_request
+def init():
+    if not hasattr(app, 'db_initialized'):
+        init_db_sync()
+        app.db_initialized = True
 
 
 

@@ -1,19 +1,15 @@
-# api/index.py — ИСПРАВЛЕННАЯ ВЕРСИЯ (без двойного JSON)
-from flask import Flask, request, jsonify, Response
+# api/index.py — РАБОЧАЯ ВЕРСИЯ с гарантированным созданием таблиц
+from flask import Flask, request, Response
 import os
 import sys
-import traceback
-from datetime import datetime
-import logging
 import json
+import logging
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-
-logger.info("=" * 50)
-logger.info("RentBot API starting...")
 
 # DATABASE_URL
 DATABASE_URL = os.getenv('DATABASE_URL', '')
@@ -25,55 +21,38 @@ logger.info(f"DATABASE_URL exists: {bool(DATABASE_URL)}")
 try:
     import psycopg2
     from psycopg2.extras import RealDictCursor
-    logger.info(f"psycopg2: {psycopg2.__version__}")
+    logger.info(f"psycopg2 imported: {psycopg2.__version__}")
 except ImportError as e:
     logger.error(f"psycopg2 error: {e}")
     psycopg2 = None
 
 def get_db():
+    """Получить соединение с БД"""
     if not psycopg2:
         raise Exception("psycopg2 not installed")
     if not DATABASE_URL:
         raise Exception("DATABASE_URL not set")
     
     conn = psycopg2.connect(DATABASE_URL, sslmode='require', connect_timeout=10)
-    conn.autocommit = False
     return conn
 
-def seed_data(conn):
-    c = conn.cursor()
-    items = [
-        ("Футбольный мяч", "футбол", 10, 10, 500, 2500),
-        ("Теннисная ракетка", "теннис", 8, 8, 750, 4000),
-        ("Баскетбольный мяч", "баскетбол", 6, 6, 500, 2500),
-        ("Горный велосипед", "вело", 4, 4, 1500, 7500),
-        ("Хоккейные коньки", "хоккей", 12, 12, 1000, 5000),
-        ("Скейтборд", "скейт", 5, 5, 750, 3500),
-        ("Роликовые коньки", "ролики", 15, 15, 750, 3500),
-        ("Гантели 10 кг", "фитнес", 20, 20, 250, 1500),
-    ]
-    c.executemany(
-        """INSERT INTO inventory (name, sport, total_quantity, available_quantity, price_per_hour, price_per_day) 
-           VALUES (%s, %s, %s, %s, %s, %s) 
-           ON CONFLICT (name) DO UPDATE SET 
-           total_quantity = EXCLUDED.total_quantity,
-           available_quantity = EXCLUDED.available_quantity,
-           price_per_hour = EXCLUDED.price_per_hour,
-           price_per_day = EXCLUDED.price_per_day""",
-        items
-    )
-    conn.commit()
-    logger.info(f"Seeded {len(items)} items")
-
 def init_db():
+    """Создать таблицы и заполнить данными"""
     if not psycopg2:
+        logger.error("psycopg2 not available")
         return False
     
     conn = None
     try:
+        logger.info("Starting DB initialization...")
         conn = get_db()
         c = conn.cursor()
         
+        # Удаляем старые таблицы если есть (чистый старт)
+        # c.execute("DROP TABLE IF EXISTS bookings CASCADE")
+        # c.execute("DROP TABLE IF EXISTS inventory CASCADE")
+        
+        # Создаём inventory
         c.execute('''
             CREATE TABLE IF NOT EXISTS inventory (
                 id SERIAL PRIMARY KEY,
@@ -85,12 +64,14 @@ def init_db():
                 price_per_day REAL DEFAULT 0
             )
         ''')
+        logger.info("Table 'inventory' created")
         
+        # Создаём bookings
         c.execute('''
             CREATE TABLE IF NOT EXISTS bookings (
                 id SERIAL PRIMARY KEY,
                 user_id BIGINT NOT NULL,
-                item_id INTEGER REFERENCES inventory(id),
+                item_id INTEGER REFERENCES inventory(id) ON DELETE CASCADE,
                 quantity INTEGER DEFAULT 1,
                 rent_type TEXT CHECK (rent_type IN ('hour', 'day')),
                 booking_date TEXT,
@@ -103,17 +84,50 @@ def init_db():
                 returned INTEGER DEFAULT 0
             )
         ''')
+        logger.info("Table 'bookings' created")
         
         conn.commit()
-        seed_data(conn)
         
+        # Заполняем данные
+        items = [
+            ("Футбольный мяч", "футбол", 10, 10, 500, 2500),
+            ("Теннисная ракетка", "теннис", 8, 8, 750, 4000),
+            ("Баскетбольный мяч", "баскетбол", 6, 6, 500, 2500),
+            ("Горный велосипед", "вело", 4, 4, 1500, 7500),
+            ("Хоккейные коньки", "хоккей", 12, 12, 1000, 5000),
+            ("Скейтборд", "скейт", 5, 5, 750, 3500),
+            ("Роликовые коньки", "ролики", 15, 15, 750, 3500),
+            ("Гантели 10 кг", "фитнес", 20, 20, 250, 1500),
+        ]
+        
+        for item in items:
+            c.execute('''
+                INSERT INTO inventory (name, sport, total_quantity, available_quantity, price_per_hour, price_per_day)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (name) DO UPDATE SET
+                    total_quantity = EXCLUDED.total_quantity,
+                    available_quantity = EXCLUDED.available_quantity,
+                    price_per_hour = EXCLUDED.price_per_hour,
+                    price_per_day = EXCLUDED.price_per_day
+            ''', item)
+        
+        conn.commit()
+        
+        # Проверяем
         c.execute("SELECT COUNT(*) FROM inventory")
         count = c.fetchone()[0]
-        logger.info(f"Total items: {count}")
+        logger.info(f"Inventory items: {count}")
+        
+        c.execute("SELECT * FROM inventory LIMIT 1")
+        sample = c.fetchone()
+        logger.info(f"Sample item: {sample}")
         
         return True
+        
     except Exception as e:
-        logger.error(f"Init error: {e}")
+        logger.error(f"Init DB error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         if conn:
             conn.rollback()
         return False
@@ -121,9 +135,13 @@ def init_db():
         if conn:
             conn.close()
 
-init_db()
+# Запускаем инициализацию ПРЯМО СЕЙЧАС
+logger.info("=" * 50)
+logger.info("Initializing database...")
+init_success = init_db()
+logger.info(f"Init result: {init_success}")
 
-# HTML админка (упрощённая, надёжная)
+# HTML админка
 HTML_PAGE = """
 <!DOCTYPE html>
 <html lang="ru">
@@ -137,7 +155,6 @@ HTML_PAGE = """
         .card { background: #1e293b; border-radius: 12px; padding: 16px; margin-bottom: 12px; border: 1px solid #334155; }
         .btn { background: #7c3aed; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
         .btn:hover { background: #6d28d9; }
-        .btn-secondary { background: #334155; }
         .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         .stat-value { font-size: 24px; font-weight: bold; color: #a78bfa; }
         .stat-label { font-size: 12px; color: #94a3b8; }
@@ -203,6 +220,7 @@ HTML_PAGE = """
             const el = document.getElementById('error');
             el.textContent = msg;
             el.style.display = 'block';
+            console.error(msg);
             setTimeout(() => el.style.display = 'none', 5000);
         }
 
@@ -220,31 +238,60 @@ HTML_PAGE = """
 
         async function loadData() {
             try {
+                console.log('Loading data...');
                 const [statsRes, bookingsRes, inventoryRes] = await Promise.all([
                     fetch('/api/stats'),
                     fetch('/api/bookings'),
                     fetch('/api/inventory')
                 ]);
 
-                if (!statsRes.ok) throw new Error('Stats failed: ' + await statsRes.text());
-                if (!bookingsRes.ok) throw new Error('Bookings failed: ' + await bookingsRes.text());
-                if (!inventoryRes.ok) throw new Error('Inventory failed: ' + await inventoryRes.text());
+                console.log('Responses:', statsRes.status, bookingsRes.status, inventoryRes.status);
 
-                // ВАЖНО: Парсим JSON один раз
-                data.stats = await statsRes.json();
-                data.bookings = await bookingsRes.json();
-                data.inventory = await inventoryRes.json();
+                if (!statsRes.ok) {
+                    const text = await statsRes.text();
+                    throw new Error('Stats failed: ' + statsRes.status + ' ' + text);
+                }
+                if (!bookingsRes.ok) {
+                    const text = await bookingsRes.text();
+                    throw new Error('Bookings failed: ' + bookingsRes.status + ' ' + text);
+                }
+                if (!inventoryRes.ok) {
+                    const text = await inventoryRes.text();
+                    throw new Error('Inventory failed: ' + inventoryRes.status + ' ' + text);
+                }
 
-                // Проверяем что данные - объекты, не строки
-                if (typeof data.stats === 'string') data.stats = JSON.parse(data.stats);
-                if (typeof data.bookings === 'string') data.bookings = JSON.parse(data.bookings);
-                if (typeof data.inventory === 'string') data.inventory = JSON.parse(data.inventory);
+                const statsText = await statsRes.text();
+                const bookingsText = await bookingsRes.text();
+                const inventoryText = await inventoryRes.text();
+
+                console.log('Raw responses:', {statsText, bookingsText: bookingsText.slice(0, 100), inventoryText: inventoryText.slice(0, 100)});
+
+                // Парсим JSON
+                try {
+                    data.stats = JSON.parse(statsText);
+                } catch(e) {
+                    throw new Error('Stats JSON parse error: ' + e.message);
+                }
+                
+                try {
+                    data.bookings = JSON.parse(bookingsText);
+                } catch(e) {
+                    throw new Error('Bookings JSON parse error: ' + e.message);
+                }
+                
+                try {
+                    data.inventory = JSON.parse(inventoryText);
+                } catch(e) {
+                    throw new Error('Inventory JSON parse error: ' + e.message);
+                }
+
+                console.log('Parsed data:', data);
 
                 updateUI();
                 setOnline(true);
             } catch (e) {
                 console.error('Load error:', e);
-                showError('Ошибка загрузки: ' + e.message);
+                showError('Ошибка: ' + e.message);
                 setOnline(false);
             }
         }
@@ -267,8 +314,8 @@ HTML_PAGE = """
         }
 
         function renderInventory(container) {
-            if (!data.inventory || data.inventory.length === 0) {
-                container.innerHTML = '<div class="loading">Нет товаров</div>';
+            if (!data.inventory || !Array.isArray(data.inventory) || data.inventory.length === 0) {
+                container.innerHTML = '<div class="loading">Нет товаров в базе</div>';
                 return;
             }
             
@@ -276,12 +323,12 @@ HTML_PAGE = """
                 <div class="card">
                     <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
                         <div>
-                            <div class="item-name">${escapeHtml(item.name)}</div>
-                            <div class="item-sport">${escapeHtml(item.sport)}</div>
+                            <div class="item-name">${escapeHtml(item.name || 'Unknown')}</div>
+                            <div class="item-sport">${escapeHtml(item.sport || '-')}</div>
                         </div>
                         <div style="text-align: right;">
-                            <div style="font-size: 20px; font-weight: bold; color: ${item.available_quantity > 0 ? '#34d399' : '#ef4444'};">
-                                ${item.available_quantity}<span style="color: #64748b; font-size: 14px;">/${item.total_quantity}</span>
+                            <div style="font-size: 20px; font-weight: bold; color: ${(item.available_quantity || 0) > 0 ? '#34d399' : '#ef4444'};">
+                                ${item.available_quantity || 0}<span style="color: #64748b; font-size: 14px;">/${item.total_quantity || 0}</span>
                             </div>
                             <div style="font-size: 11px; color: #64748b;">доступно</div>
                         </div>
@@ -289,11 +336,11 @@ HTML_PAGE = """
                     <div class="grid-2">
                         <div class="price-tag">
                             <div class="price-label">Час</div>
-                            <div class="price-value">${item.price_per_hour.toLocaleString()} ₸</div>
+                            <div class="price-value">${(item.price_per_hour || 0).toLocaleString()} ₸</div>
                         </div>
                         <div class="price-tag">
                             <div class="price-label">День</div>
-                            <div class="price-value">${item.price_per_day.toLocaleString()} ₸</div>
+                            <div class="price-value">${(item.price_per_day || 0).toLocaleString()} ₸</div>
                         </div>
                     </div>
                 </div>
@@ -301,6 +348,11 @@ HTML_PAGE = """
         }
 
         function renderBookings(container) {
+            if (!data.bookings || !Array.isArray(data.bookings)) {
+                container.innerHTML = '<div class="loading">Ошибка данных бронирований</div>';
+                return;
+            }
+            
             const active = data.bookings.filter(b => !b.returned);
             if (active.length === 0) {
                 container.innerHTML = '<div class="loading">Нет активных бронирований</div>';
@@ -313,16 +365,16 @@ HTML_PAGE = """
                 <div class="card" style="${isOverdue ? 'border-color: #ef4444; background: rgba(239, 68, 68, 0.1);' : ''}">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
                         <div>
-                            <div class="item-name">${escapeHtml(b.item_name)}</div>
+                            <div class="item-name">${escapeHtml(b.item_name || 'Unknown')}</div>
                             <div style="font-size: 12px; color: #64748b;">ID: ${b.user_id}</div>
                         </div>
                         <div style="text-align: right;">
-                            <div style="color: #34d399; font-weight: bold;">${b.total_price.toLocaleString()} ₸</div>
-                            <div style="font-size: 12px; color: #64748b;">${b.quantity} шт.</div>
+                            <div style="color: #34d399; font-weight: bold;">${(b.total_price || 0).toLocaleString()} ₸</div>
+                            <div style="font-size: 12px; color: #64748b;">${b.quantity || 0} шт.</div>
                         </div>
                     </div>
                     <div style="font-size: 12px; color: #94a3b8; margin-bottom: 8px;">
-                        ${b.booking_date} ${b.booking_time} • ${b.duration} ${b.rent_type === 'hour' ? 'ч.' : 'дн.'}
+                        ${b.booking_date || '-'} ${b.booking_time || ''} • ${b.duration || 0} ${b.rent_type === 'hour' ? 'ч.' : 'дн.'}
                     </div>
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <div style="font-size: 12px; ${isOverdue ? 'color: #ef4444; font-weight: bold;' : 'color: #64748b;'}">
@@ -354,17 +406,23 @@ HTML_PAGE = """
         }
 
         function escapeHtml(text) {
+            if (!text) return '';
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
         }
 
         function formatDate(dt) {
-            const d = new Date(dt);
-            return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+            if (!dt) return '-';
+            try {
+                const d = new Date(dt);
+                return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+            } catch(e) {
+                return dt;
+            }
         }
 
-        // Load and refresh
+        // Load
         loadData();
         setInterval(loadData, 10000);
     </script>
@@ -381,31 +439,37 @@ def get_stats():
     conn = None
     try:
         conn = get_db()
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=RealDictCursor)
         
-        c.execute("SELECT COUNT(*), COALESCE(SUM(available_quantity), 0) FROM inventory")
-        total_items, available = c.fetchone()
+        c.execute("SELECT COUNT(*), COALESCE(SUM(available_quantity), 0) as avail FROM inventory")
+        r = c.fetchone()
+        total_items = r['count'] if r else 0
+        available = r['avail'] if r else 0
         
-        c.execute("SELECT COUNT(*), COALESCE(SUM(total_price), 0) FROM bookings WHERE returned = 0")
-        active, revenue = c.fetchone()
+        c.execute("SELECT COUNT(*), COALESCE(SUM(total_price), 0) as rev FROM bookings WHERE returned = 0")
+        r = c.fetchone()
+        active = r['count'] if r else 0
+        revenue = r['rev'] if r else 0
         
         now = datetime.now().isoformat()
         c.execute("SELECT COUNT(*) FROM bookings WHERE returned = 0 AND return_datetime < %s", (now,))
-        overdue = c.fetchone()[0]
+        r = c.fetchone()
+        overdue = r['count'] if r else 0
         
         result = {
-            "total_items": total_items or 0,
-            "active_bookings": active or 0,
+            "total_items": total_items,
+            "active_bookings": active,
             "total_revenue": float(revenue or 0),
             "available_items": int(available or 0),
-            "overdue_bookings": overdue or 0
+            "overdue_bookings": overdue
         }
         
-        # ВАЖНО: Возвращаем чистый JSON без обёртки
         return Response(json.dumps(result), mimetype='application/json')
         
     except Exception as e:
         logger.error(f"Stats error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return Response(json.dumps({"error": str(e)}), status=500, mimetype='application/json')
     finally:
         if conn:
@@ -416,16 +480,15 @@ def get_bookings():
     conn = None
     try:
         conn = get_db()
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=RealDictCursor)
         c.execute("""
             SELECT b.*, i.name as item_name 
             FROM bookings b 
-            JOIN inventory i ON b.item_id = i.id 
-            ORDER BY b.booked_at DESC NULLS LAST
+            LEFT JOIN inventory i ON b.item_id = i.id 
+            ORDER BY b.id DESC
         """)
         rows = c.fetchall()
-        result = [dict(r) for r in rows]
-        return Response(json.dumps(result), mimetype='application/json')
+        return Response(json.dumps([dict(r) for r in rows]), mimetype='application/json')
     except Exception as e:
         logger.error(f"Bookings error: {e}")
         return Response(json.dumps({"error": str(e)}), status=500, mimetype='application/json')
@@ -438,13 +501,16 @@ def get_inventory():
     conn = None
     try:
         conn = get_db()
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=RealDictCursor)
         c.execute("SELECT * FROM inventory ORDER BY id")
         rows = c.fetchall()
         result = [dict(r) for r in rows]
+        logger.info(f"Inventory returned: {len(result)} items")
         return Response(json.dumps(result), mimetype='application/json')
     except Exception as e:
         logger.error(f"Inventory error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return Response(json.dumps({"error": str(e)}), status=500, mimetype='application/json')
     finally:
         if conn:
@@ -455,7 +521,7 @@ def return_booking(booking_id):
     conn = None
     try:
         conn = get_db()
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=RealDictCursor)
         
         c.execute("SELECT item_id, quantity FROM bookings WHERE id = %s AND returned = 0", (booking_id,))
         r = c.fetchone()
@@ -487,12 +553,8 @@ def health():
     except Exception as e:
         return Response(json.dumps({"status": "error", "database": str(e)}), status=500, mimetype='application/json')
 
-@app.route('/api/seed', methods=['POST'])
-def force_seed():
-    try:
-        conn = get_db()
-        seed_data(conn)
-        conn.close()
-        return Response(json.dumps({"ok": True}), mimetype='application/json')
-    except Exception as e:
-        return Response(json.dumps({"error": str(e)}), status=500, mimetype='application/json')
+@app.route('/api/init', methods=['POST'])
+def force_init():
+    """Ручная инициализация БД"""
+    success = init_db()
+    return Response(json.dumps({"success": success}), mimetype='application/json')

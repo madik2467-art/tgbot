@@ -13,6 +13,6 @@
     }
   ],
   "env": {
-    "DATABASE_URL": "postgresql://postgres:train-luck-stun-apple@db.wgxgpjpfjhigqroncess.supabase.co:5432/postgres"
+    "DATABASE_URL": "postgresql://postgres:train-luck-stun-apple@db.wgxgpjpfjhigqroncess.supabase.co:5432/postgres?sslmode=require"
   }
 }

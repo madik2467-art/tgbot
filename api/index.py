@@ -1,10 +1,10 @@
-# api/index.py — РАБОЧАЯ ВЕРСИЯ с JSON сериализацией
+# api/index.py — ВЕРСИЯ С РАЗДЕЛЕНИЕМ ПОЛЬЗОВАТЕЛЕЙ
 from flask import Flask, request, Response
 import os
-import sys
 import json
 import logging
 from datetime import datetime, date
+from functools import wraps
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,7 +24,6 @@ except ImportError as e:
     psycopg2 = None
 
 class DateTimeEncoder(json.JSONEncoder):
-    """Кастомный JSON encoder для datetime"""
     def default(self, obj):
         if isinstance(obj, (datetime, date)):
             return obj.isoformat()
@@ -38,7 +37,6 @@ def get_db():
     return psycopg2.connect(DATABASE_URL, sslmode='require', connect_timeout=10)
 
 def to_json(data):
-    """Безопасная сериализация в JSON"""
     return json.dumps(data, cls=DateTimeEncoder, ensure_ascii=False)
 
 def init_db():
@@ -120,205 +118,125 @@ def init_db():
 
 init_db()
 
-# HTML админка (та же)
+# ============ HTML СТРАНИЦА С USER_ID ============
 HTML_PAGE = """
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RentBot Admin</title>
+    <title>Мои брони</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 16px; }
         .card { background: #1e293b; border-radius: 12px; padding: 16px; margin-bottom: 12px; border: 1px solid #334155; }
         .btn { background: #7c3aed; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
         .btn:hover { background: #6d28d9; }
-        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-        .stat-value { font-size: 24px; font-weight: bold; color: #a78bfa; }
-        .stat-label { font-size: 12px; color: #94a3b8; }
+        .btn-secondary { background: #334155; }
+        .btn-secondary:hover { background: #475569; }
+        .item-name { font-weight: 600; color: white; }
+        .price { color: #34d399; font-weight: bold; }
+        .overdue { border-color: #ef4444 !important; background: rgba(239, 68, 68, 0.1) !important; }
+        .returned { opacity: 0.5; }
         .tabs { display: flex; gap: 8px; margin-bottom: 16px; background: #1e293b; padding: 4px; border-radius: 8px; }
         .tab { flex: 1; padding: 8px; text-align: center; border-radius: 6px; cursor: pointer; color: #94a3b8; }
         .tab.active { background: #7c3aed; color: white; }
-        .item-name { font-weight: 600; color: white; }
-        .item-sport { font-size: 12px; color: #a78bfa; text-transform: capitalize; }
-        .price-tag { background: #0f172a; padding: 8px 12px; border-radius: 6px; text-align: center; }
-        .price-label { font-size: 11px; color: #64748b; }
-        .price-value { font-size: 14px; font-weight: 600; color: #34d399; }
-        .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
-        .status-online { background: #22c55e; }
-        .status-offline { background: #ef4444; }
-        #error { background: #ef4444; color: white; padding: 12px; border-radius: 8px; margin-bottom: 16px; display: none; }
-        .loading { text-align: center; padding: 40px; color: #64748b; }
+        .empty { text-align: center; padding: 40px; color: #64748b; }
+        .error { background: #ef4444; color: white; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
+        .user-info { background: #1e293b; padding: 12px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; color: #94a3b8; }
     </style>
 </head>
 <body>
-    <div id="error"></div>
+    <div id="error" class="error" style="display: none;"></div>
     
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-        <h1 style="margin: 0; color: #a78bfa;">RentBot Admin</h1>
-        <div style="font-size: 12px; color: #94a3b8;">
-            <span id="status-dot" class="status-dot status-offline"></span>
-            <span id="status-text">Оффлайн</span>
-        </div>
+    <div class="user-info">
+        👤 Пользователь ID: <span id="user-id-display">-</span>
     </div>
 
-    <div class="grid-2" id="stats">
-        <div class="card">
-            <div class="stat-label">Выручка</div>
-            <div class="stat-value" id="revenue">0 ₸</div>
-        </div>
-        <div class="card">
-            <div class="stat-label">Активные</div>
-            <div class="stat-value" id="active">0</div>
-        </div>
-        <div class="card">
-            <div class="stat-label">Просрочено</div>
-            <div class="stat-value" id="overdue" style="color: #34d399;">0</div>
-        </div>
-        <div class="card">
-            <div class="stat-label">Доступно</div>
-            <div class="stat-value" id="available" style="color: #34d399;">0</div>
-        </div>
-    </div>
+    <h1 style="color: #a78bfa; margin-bottom: 20px;">Мои брони</h1>
 
     <div class="tabs">
-        <div class="tab active" onclick="switchTab('bookings')">Брони</div>
-        <div class="tab" onclick="switchTab('inventory')">Склад</div>
+        <div class="tab active" onclick="switchTab('active')">Активные</div>
+        <div class="tab" onclick="switchTab('history')">История</div>
     </div>
 
     <div id="content">
-        <div class="loading">Загрузка...</div>
+        <div style="text-align: center; padding: 40px; color: #64748b;">Загрузка...</div>
     </div>
 
     <script>
-        let currentTab = 'bookings';
-        let data = { stats: {}, bookings: [], inventory: [] };
+        // Получаем user_id из URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const userId = urlParams.get('user_id');
+        
+        if (!userId) {
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('error').textContent = 'Ошибка: откройте через бота';
+            document.getElementById('content').innerHTML = '';
+        } else {
+            document.getElementById('user-id-display').textContent = userId;
+        }
+
+        let currentTab = 'active';
+        let myBookings = [];
 
         function showError(msg) {
             const el = document.getElementById('error');
             el.textContent = msg;
             el.style.display = 'block';
-            console.error(msg);
             setTimeout(() => el.style.display = 'none', 5000);
         }
 
-        function setOnline(online) {
-            const dot = document.getElementById('status-dot');
-            const text = document.getElementById('status-text');
-            if (online) {
-                dot.className = 'status-dot status-online';
-                text.textContent = 'Онлайн';
-            } else {
-                dot.className = 'status-dot status-offline';
-                text.textContent = 'Оффлайн';
-            }
-        }
-
-        async function loadData() {
+        async function loadMyBookings() {
+            if (!userId) return;
+            
             try {
-                console.log('Loading...');
-                const [statsRes, bookingsRes, inventoryRes] = await Promise.all([
-                    fetch('/api/stats'),
-                    fetch('/api/bookings'),
-                    fetch('/api/inventory')
-                ]);
-
-                console.log('Status:', statsRes.status, bookingsRes.status, inventoryRes.status);
-
-                if (!statsRes.ok) throw new Error('Stats: ' + await statsRes.text());
-                if (!bookingsRes.ok) throw new Error('Bookings: ' + await bookingsRes.text());
-                if (!inventoryRes.ok) throw new Error('Inventory: ' + await inventoryRes.text());
-
-                data.stats = await statsRes.json();
-                data.bookings = await bookingsRes.json();
-                data.inventory = await inventoryRes.json();
-
-                console.log('Loaded:', data.inventory.length, 'items');
-                updateUI();
-                setOnline(true);
+                const res = await fetch(`/api/my-bookings?user_id=${userId}`);
+                if (!res.ok) throw new Error(await res.text());
+                
+                myBookings = await res.json();
+                renderBookings();
             } catch (e) {
                 console.error('Error:', e);
-                showError('Ошибка: ' + e.message);
-                setOnline(false);
+                showError('Ошибка загрузки: ' + e.message);
             }
         }
 
-        function updateUI() {
-            document.getElementById('revenue').textContent = (data.stats.total_revenue || 0).toLocaleString() + ' ₸';
-            document.getElementById('active').textContent = data.stats.active_bookings || 0;
-            document.getElementById('overdue').textContent = data.stats.overdue_bookings || 0;
-            document.getElementById('overdue').style.color = (data.stats.overdue_bookings > 0) ? '#ef4444' : '#34d399';
-            document.getElementById('available').textContent = data.stats.available_items || 0;
+        function renderBookings() {
+            const container = document.getElementById('content');
+            const filtered = myBookings.filter(b => {
+                if (currentTab === 'active') return !b.returned;
+                return b.returned;
+            });
 
-            const content = document.getElementById('content');
-            if (currentTab === 'inventory') renderInventory(content);
-            else renderBookings(content);
-        }
-
-        function renderInventory(container) {
-            if (!data.inventory || data.inventory.length === 0) {
-                container.innerHTML = '<div class="loading">Нет товаров</div>';
+            if (filtered.length === 0) {
+                container.innerHTML = `<div class="empty">Нет ${currentTab === 'active' ? 'активных' : 'завершенных'} бронирований</div>`;
                 return;
             }
-            
-            container.innerHTML = data.inventory.map(item => `
-                <div class="card">
-                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
-                        <div>
-                            <div class="item-name">${escapeHtml(item.name)}</div>
-                            <div class="item-sport">${escapeHtml(item.sport)}</div>
-                        </div>
-                        <div style="text-align: right;">
-                            <div style="font-size: 20px; font-weight: bold; color: ${item.available_quantity > 0 ? '#34d399' : '#ef4444'};">
-                                ${item.available_quantity}<span style="color: #64748b; font-size: 14px;">/${item.total_quantity}</span>
-                            </div>
-                            <div style="font-size: 11px; color: #64748b;">доступно</div>
-                        </div>
-                    </div>
-                    <div class="grid-2">
-                        <div class="price-tag">
-                            <div class="price-label">Час</div>
-                            <div class="price-value">${item.price_per_hour.toLocaleString()} ₸</div>
-                        </div>
-                        <div class="price-tag">
-                            <div class="price-label">День</div>
-                            <div class="price-value">${item.price_per_day.toLocaleString()} ₸</div>
-                        </div>
-                    </div>
-                </div>
-            `).join('');
-        }
 
-        function renderBookings(container) {
-            const active = data.bookings.filter(b => !b.returned);
-            if (active.length === 0) {
-                container.innerHTML = '<div class="loading">Нет активных бронирований</div>';
-                return;
-            }
-            
-            container.innerHTML = active.map(b => {
-                const isOverdue = new Date(b.return_datetime) < new Date() && !b.returned;
+            container.innerHTML = filtered.map(b => {
+                const isOverdue = !b.returned && new Date(b.return_datetime) < new Date();
                 return `
-                <div class="card" style="${isOverdue ? 'border-color: #ef4444; background: rgba(239, 68, 68, 0.1);' : ''}">
+                <div class="card ${isOverdue ? 'overdue' : ''} ${b.returned ? 'returned' : ''}">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
                         <div>
                             <div class="item-name">${escapeHtml(b.item_name)}</div>
-                            <div style="font-size: 12px; color: #64748b;">ID: ${b.user_id}</div>
+                            <div style="font-size: 12px; color: #64748b;">${b.quantity} шт. • ${b.duration} ${b.rent_type === 'hour' ? 'ч.' : 'дн.'}</div>
                         </div>
-                        <div style="text-align: right;">
-                            <div style="color: #34d399; font-weight: bold;">${b.total_price.toLocaleString()} ₸</div>
-                            <div style="font-size: 12px; color: #64748b;">${b.quantity} шт.</div>
-                        </div>
+                        <div class="price">${b.total_price.toLocaleString()} ₸</div>
                     </div>
                     <div style="font-size: 12px; color: #94a3b8; margin-bottom: 8px;">
-                        ${b.booking_date} ${b.booking_time} • ${b.duration} ${b.rent_type === 'hour' ? 'ч.' : 'дн.'}
+                        ${b.booking_date} ${b.booking_time || ''}
                     </div>
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <div style="font-size: 12px; ${isOverdue ? 'color: #ef4444; font-weight: bold;' : 'color: #64748b;'}">
-                            ${isOverdue ? '⚠️ ' : ''}Возврат: ${formatDate(b.return_datetime)}
+                            ${isOverdue ? '⚠️ Просрочено! ' : ''}
+                            ${b.returned ? '✅ Возвращено' : 'Возврат: ' + formatDate(b.return_datetime)}
                         </div>
-                        <button class="btn" onclick="returnBooking(${b.id})" style="font-size: 12px; padding: 6px 12px;">Вернуть</button>
+                        ${!b.returned ? `
+                            <button class="btn" onclick="returnItem(${b.id})" style="font-size: 12px; padding: 6px 12px;">Вернуть</button>
+                        ` : ''}
                     </div>
                 </div>
                 `;
@@ -329,15 +247,23 @@ HTML_PAGE = """
             currentTab = tab;
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             event.target.classList.add('active');
-            updateUI();
+            renderBookings();
         }
 
-        async function returnBooking(id) {
+        async function returnItem(bookingId) {
             if (!confirm('Подтвердить возврат?')) return;
+            
             try {
-                const res = await fetch(`/api/bookings/${id}/return`, { method: 'POST' });
-                if (!res.ok) throw new Error(await res.text());
-                await loadData();
+                const res = await fetch(`/api/my-bookings/${bookingId}/return?user_id=${userId}`, { 
+                    method: 'POST' 
+                });
+                
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.error || 'Ошибка');
+                }
+                
+                await loadMyBookings();
             } catch (e) {
                 showError('Ошибка возврата: ' + e.message);
             }
@@ -360,8 +286,10 @@ HTML_PAGE = """
             }
         }
 
-        loadData();
-        setInterval(loadData, 10000);
+        // Загружаем при старте
+        loadMyBookings();
+        // Обновляем каждые 10 секунд
+        setInterval(loadMyBookings, 10000);
     </script>
 </body>
 </html>
@@ -370,6 +298,98 @@ HTML_PAGE = """
 @app.route('/')
 def index():
     return HTML_PAGE
+
+# ============ API ДЛЯ КОНКРЕТНОГО ПОЛЬЗОВАТЕЛЯ ============
+
+@app.route('/api/my-bookings')
+def get_my_bookings():
+    """Получить брони ТОЛЬКО текущего пользователя"""
+    user_id = request.args.get('user_id', type=int)
+    if not user_id:
+        return Response(to_json({"error": "user_id required"}), status=401, mimetype='application/json')
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        c.execute("""
+            SELECT b.*, i.name as item_name 
+            FROM bookings b 
+            LEFT JOIN inventory i ON b.item_id = i.id 
+            WHERE b.user_id = %s
+            ORDER BY b.id DESC
+        """, (user_id,))
+        rows = c.fetchall()
+        
+        result = []
+        for row in rows:
+            item = dict(row)
+            for key, value in item.items():
+                if isinstance(value, (datetime, date)):
+                    item[key] = value.isoformat()
+            result.append(item)
+        
+        return Response(to_json(result), mimetype='application/json')
+    except Exception as e:
+        logger.error(f"My bookings error: {e}")
+        return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/my-bookings/<int:booking_id>/return', methods=['POST'])
+def return_my_booking(booking_id):
+    """Вернуть бронь ТОЛЬКО если она принадлежит текущему пользователю"""
+    user_id = request.args.get('user_id', type=int)
+    if not user_id:
+        return Response(to_json({"error": "user_id required"}), status=401, mimetype='application/json')
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Проверяем, что бронь принадлежит этому пользователю
+        c.execute("""
+            SELECT item_id, quantity, returned 
+            FROM bookings 
+            WHERE id = %s AND user_id = %s
+        """, (booking_id, user_id))
+        
+        booking = c.fetchone()
+        if not booking:
+            return Response(to_json({"error": "Бронь не найдена или не принадлежит вам"}), status=404, mimetype='application/json')
+        
+        if booking['returned']:
+            return Response(to_json({"error": "Уже возвращена"}), status=400, mimetype='application/json')
+        
+        # Возвращаем инвентарь
+        c.execute("""
+            UPDATE inventory 
+            SET available_quantity = available_quantity + %s 
+            WHERE id = %s
+        """, (booking['quantity'], booking['item_id']))
+        
+        # Помечаем как возвращенную
+        c.execute("""
+            UPDATE bookings 
+            SET returned = 1 
+            WHERE id = %s
+        """, (booking_id,))
+        
+        conn.commit()
+        return Response(to_json({"ok": True}), mimetype='application/json')
+        
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Return error: {e}")
+        return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
+    finally:
+        if conn:
+            conn.close()
+
+# ============ АДМИН API (общая статистика) ============
 
 @app.route('/api/stats')
 def get_stats():
@@ -405,37 +425,6 @@ def get_stats():
         if conn:
             conn.close()
 
-@app.route('/api/bookings')
-def get_bookings():
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor(cursor_factory=RealDictCursor)
-        c.execute("""
-            SELECT b.*, i.name as item_name 
-            FROM bookings b 
-            LEFT JOIN inventory i ON b.item_id = i.id 
-            ORDER BY b.id DESC
-        """)
-        rows = c.fetchall()
-        # Конвертируем в обычные dict
-        result = []
-        for row in rows:
-            item = dict(row)
-            # Конвертируем все datetime в строки
-            for key, value in item.items():
-                if isinstance(value, (datetime, date)):
-                    item[key] = value.isoformat()
-            result.append(item)
-        
-        return Response(to_json(result), mimetype='application/json')
-    except Exception as e:
-        logger.error(f"Bookings error: {e}")
-        return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
-    finally:
-        if conn:
-            conn.close()
-
 @app.route('/api/inventory')
 def get_inventory():
     conn = None
@@ -445,48 +434,17 @@ def get_inventory():
         c.execute("SELECT * FROM inventory ORDER BY id")
         rows = c.fetchall()
         
-        # Конвертируем в обычные dict
         result = []
         for row in rows:
             item = dict(row)
-            # Конвертируем все datetime в строки
             for key, value in item.items():
                 if isinstance(value, (datetime, date)):
                     item[key] = value.isoformat()
             result.append(item)
         
-        logger.info(f"Inventory: {len(result)} items")
         return Response(to_json(result), mimetype='application/json')
     except Exception as e:
         logger.error(f"Inventory error: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
-    finally:
-        if conn:
-            conn.close()
-
-@app.route('/api/bookings/<int:booking_id>/return', methods=['POST'])
-def return_booking(booking_id):
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor(cursor_factory=RealDictCursor)
-        
-        c.execute("SELECT item_id, quantity FROM bookings WHERE id = %s AND returned = 0", (booking_id,))
-        r = c.fetchone()
-        if not r:
-            return Response(to_json({"error": "Not found"}), status=404, mimetype='application/json')
-        
-        c.execute("UPDATE inventory SET available_quantity = available_quantity + %s WHERE id = %s", (r['quantity'], r['item_id']))
-        c.execute("UPDATE bookings SET returned = 1 WHERE id = %s", (booking_id,))
-        conn.commit()
-        
-        return Response(to_json({"ok": True}), mimetype='application/json')
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error(f"Return error: {e}")
         return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
     finally:
         if conn:
@@ -499,11 +457,6 @@ def health():
         c = conn.cursor()
         c.execute("SELECT 1")
         conn.close()
-        return Response(to_json({"status": "ok", "database": "connected"}), mimetype='application/json')
+        return Response(to_json({"status": "ok"}), mimetype='application/json')
     except Exception as e:
-        return Response(to_json({"status": "error", "database": str(e)}), status=500, mimetype='application/json')
-
-@app.route('/api/init', methods=['POST'])
-def force_init():
-    success = init_db()
-    return Response(to_json({"success": success}), mimetype='application/json')
+        return Response(to_json({"status": "error", "error": str(e)}), status=500, mimetype='application/json')

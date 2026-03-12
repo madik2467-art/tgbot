@@ -12,7 +12,7 @@ app = Flask(__name__)
 
 # CONFIG
 DATABASE_URL = os.getenv('DATABASE_URL', '')
-ADMIN_ID = int(os.getenv('ADMIN_ID', '6106034597'))  # Добавьте в Environment Variables Vercel
+ADMIN_ID = int(os.getenv('ADMIN_ID', '5243526187'))  # Добавьте в Environment Variables Vercel
 WEBAPP_URL = os.getenv('WEBAPP_URL', '')
 
 if 'channel_binding' in DATABASE_URL:
@@ -834,3 +834,4 @@ def get_inventory():
 @app.route('/api/health')
 def health():
     return Response(to_json({"status": "ok"}), mimetype='application/json')
+

@@ -251,40 +251,49 @@ USER_PAGE = """
             }).join('');
         }
 
-        async function showCatalog() {
-            try {
-                const res = await fetch('/api/inventory');
-                const items = await res.json();
-                const container = document.getElementById('catalog-content');
-                
-                container.innerHTML = items.map(item => `
-                    <div class="card" style="display: flex; gap: 16px; align-items: center;">
-                        <img src="${item.image_url || 'https://via.placeholder.com/100'}" 
-                             style="width: 100px; height: 100px; object-fit: cover; border-radius: 8px;" 
-                             onerror="this.src='https://via.placeholder.com/100'">
-                        <div style="flex: 1;">
-                            <div class="item-name">${escapeHtml(item.name)}</div>
-                            <div style="font-size: 12px; color: #a78bfa; text-transform: capitalize; margin-bottom: 8px;">${item.sport}</div>
-                            <div style="display: flex; gap: 16px; font-size: 14px;">
-                                <span style="color: #34d399;">${item.price_per_hour}₸/час</span>
-                                <span style="color: #34d399;">${item.price_per_day}₸/день</span>
-                            </div>
-                            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">
-                                Доступно: ${item.available_quantity}/${item.total_quantity}
-                            </div>
+// В USER_PAGE замените функцию showCatalog:
+async function showCatalog() {
+    try {
+        const res = await fetch('/api/inventory');
+        if (!res.ok) throw new Error('Failed to load');
+        const items = await res.json();
+        const container = document.getElementById('catalog-content');
+        
+        if (!items || items.length === 0) {
+            container.innerHTML = '<div style="text-align: center; padding: 40px;">Каталог пуст</div>';
+        } else {
+            container.innerHTML = items.map(item => `
+                <div class="card" style="display: flex; gap: 16px; align-items: center; margin-bottom: 12px;">
+                    <img src="${item.image_url || 'https://via.placeholder.com/100?text=No+Image'}" 
+                         style="width: 100px; height: 100px; object-fit: cover; border-radius: 8px; flex-shrink: 0;" 
+                         onerror="this.src='https://via.placeholder.com/100?text=Error'">
+                    <div style="flex: 1;">
+                        <div style="font-weight: 600; font-size: 16px; margin-bottom: 4px;">${escapeHtml(item.name)}</div>
+                        <div style="font-size: 12px; color: #a78bfa; text-transform: uppercase; margin-bottom: 8px;">${item.sport}</div>
+                        <div style="display: flex; gap: 16px; font-size: 14px; margin-bottom: 4px;">
+                            <span style="color: #34d399;">${item.price_per_hour}₸/час</span>
+                            <span style="color: #34d399;">${item.price_per_day}₸/день</span>
+                        </div>
+                        <div style="font-size: 12px; color: ${item.available_quantity > 0 ? '#64748b' : '#ef4444'};">
+                            Доступно: ${item.available_quantity} из ${item.total_quantity}
                         </div>
                     </div>
-                `).join('');
-                
-                document.getElementById('catalog-modal').style.display = 'block';
-            } catch (e) {
-                showError('Ошибка загрузки каталога');
-            }
+                </div>
+            `).join('');
         }
+        
+        document.getElementById('catalog-modal').style.display = 'block';
+        document.body.style.overflow = 'hidden';
+    } catch (e) {
+        console.error('Catalog error:', e);
+        showError('Ошибка загрузки каталога: ' + e.message);
+    }
+}
 
-        function closeCatalog() {
-            document.getElementById('catalog-modal').style.display = 'none';
-        }
+function closeCatalog() {
+    document.getElementById('catalog-modal').style.display = 'none';
+    document.body.style.overflow = 'auto';
+}
 
         function switchTab(tab) {
             currentTab = tab;
@@ -834,4 +843,5 @@ def get_inventory():
 @app.route('/api/health')
 def health():
     return Response(to_json({"status": "ok"}), mimetype='application/json')
+
 

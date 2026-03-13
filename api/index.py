@@ -1,4 +1,4 @@
-# api/index.py — ИСПРАВЛЕННАЯ И УЛУЧШЕННАЯ ВЕРСИЯ
+# api/index.py — ПОЛНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ (с админкой)
 from flask import Flask, request, Response
 import os
 import json
@@ -48,7 +48,7 @@ def init_db():
         conn = get_db()
         c = conn.cursor()
         
-        # Таблица inventory без image_url
+        # Таблица inventory БЕЗ image_url
         c.execute('''
             CREATE TABLE IF NOT EXISTS inventory (
                 id SERIAL PRIMARY KEY,
@@ -81,7 +81,7 @@ def init_db():
         
         conn.commit()
         
-        # Заполняем данные без фото
+        # Начальные данные
         items = [
             (1, "Футбольный мяч", "футбол", 10, 10, 500, 2500),
             (2, "Теннисная ракетка", "теннис", 8, 8, 750, 4000),
@@ -121,7 +121,7 @@ def init_db():
 
 init_db()
 
-# ============ HTML ============
+# ============ HTML (улучшенный UI) ============
 
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="ru">
@@ -611,12 +611,10 @@ HTML_PAGE = """<!DOCTYPE html>
             } catch(e) { return dt; }
         }
 
-        // Закрытие модалки по Escape
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') closeCatalog();
         });
 
-        // Pull to refresh для мобильных
         let touchStartY = 0;
         document.addEventListener('touchstart', e => touchStartY = e.touches[0].clientY);
         document.addEventListener('touchend', e => {
@@ -628,18 +626,16 @@ HTML_PAGE = """<!DOCTYPE html>
         });
 
         loadBookings();
-        setInterval(loadBookings, 30000); // Обновление каждые 30 сек вместо 10
+        setInterval(loadBookings, 30000);
     </script>
 </body>
 </html>"""
 
-# ============ ROUTES ============
+# ============ USER API ============
 
 @app.route('/')
 def index():
     return HTML_PAGE
-
-# ============ API ============
 
 @app.route('/api/my-bookings')
 def get_my_bookings():
@@ -651,7 +647,7 @@ def get_my_bookings():
     try:
         conn = get_db()
         c = conn.cursor(cursor_factory=RealDictCursor)
-        # ИСПРАВЛЕНО: убран i.image_url из запроса
+        # ИСПРАВЛЕНО: убран i.image_url
         c.execute("""
             SELECT b.*, i.name as item_name 
             FROM bookings b 
@@ -734,6 +730,78 @@ def get_inventory():
         return Response(to_json(result), mimetype='application/json')
     except Exception as e:
         logger.error(f"Inventory error: {e}")
+        return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
+    finally:
+        if conn:
+            conn.close()
+
+# ============ ADMIN API (ИСПРАВЛЕНО) ============
+
+@app.route('/api/admin/bookings')
+def get_admin_bookings():
+    # Проверка админа
+    admin_id = request.args.get('admin_id', type=int)
+    if admin_id != ADMIN_ID:
+        return Response(to_json({"error": "Forbidden"}), status=403, mimetype='application/json')
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        # ИСПРАВЛЕНО: убран i.image_url из запроса
+        c.execute("""
+            SELECT b.*, i.name as item_name, u.username, u.full_name
+            FROM bookings b 
+            LEFT JOIN inventory i ON b.item_id = i.id 
+            LEFT JOIN users u ON b.user_id = u.id
+            ORDER BY b.id DESC
+        """)
+        rows = c.fetchall()
+        
+        result = []
+        for row in rows:
+            item = dict(row)
+            for key, value in item.items():
+                if isinstance(value, (datetime, date)):
+                    item[key] = value.isoformat()
+            result.append(item)
+        
+        return Response(to_json(result), mimetype='application/json')
+    except Exception as e:
+        logger.error(f"Admin bookings error: {e}")
+        return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/admin/stats')
+def get_admin_stats():
+    admin_id = request.args.get('admin_id', type=int)
+    if admin_id != ADMIN_ID:
+        return Response(to_json({"error": "Forbidden"}), status=403, mimetype='application/json')
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        c.execute("SELECT COUNT(*) FROM bookings WHERE returned = 0")
+        active = c.fetchone()[0]
+        
+        c.execute("SELECT COUNT(*) FROM bookings WHERE returned = 1")
+        returned = c.fetchone()[0]
+        
+        c.execute("SELECT COALESCE(SUM(total_price), 0) FROM bookings")
+        revenue = c.fetchone()[0]
+        
+        return Response(to_json({
+            "active_bookings": active,
+            "returned_bookings": returned,
+            "total_revenue": revenue
+        }), mimetype='application/json')
+        
+    except Exception as e:
+        logger.error(f"Admin stats error: {e}")
         return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
     finally:
         if conn:

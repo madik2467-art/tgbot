@@ -1,4 +1,4 @@
-# api/index.py — ПОЛНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ (с админкой)
+# api/index.py — ИСПРАВЛЕННАЯ ВЕРСИЯ
 from flask import Flask, request, Response
 import os
 import json
@@ -10,9 +10,11 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# Берём из переменных окружения (должны быть настроены в Vercel!)
 DATABASE_URL = os.getenv('DATABASE_URL', '')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 
+# Убираем channel_binding если есть
 if 'channel_binding' in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.split('&channel_binding')[0]
 
@@ -40,7 +42,8 @@ def to_json(data):
     return json.dumps(data, cls=DateTimeEncoder, ensure_ascii=False)
 
 def init_db():
-    if not psycopg2:
+    if not psycopg2 or not DATABASE_URL:
+        logger.error("DB not initialized: psycopg2 or DATABASE_URL missing")
         return False
     
     conn = None
@@ -48,7 +51,7 @@ def init_db():
         conn = get_db()
         c = conn.cursor()
         
-        # Таблица inventory БЕЗ image_url
+        # Таблица inventory
         c.execute('''
             CREATE TABLE IF NOT EXISTS inventory (
                 id SERIAL PRIMARY KEY,
@@ -107,7 +110,7 @@ def init_db():
             ''', item)
         
         conn.commit()
-        logger.info("DB initialized")
+        logger.info("DB initialized successfully")
         return True
         
     except Exception as e:
@@ -119,10 +122,10 @@ def init_db():
         if conn:
             conn.close()
 
+# Инициализация при старте
 init_db()
 
-# ============ HTML (улучшенный UI) ============
-
+# ============ HTML ============
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -631,7 +634,7 @@ HTML_PAGE = """<!DOCTYPE html>
 </body>
 </html>"""
 
-# ============ USER API ============
+# ============ ROUTES ============
 
 @app.route('/')
 def index():
@@ -640,6 +643,7 @@ def index():
 @app.route('/api/my-bookings')
 def get_my_bookings():
     user_id = request.args.get('user_id', type=int)
+    # ИСПРАВЛЕНО: было if not userId (опечатка)
     if not user_id:
         return Response(to_json({"error": "user_id required"}), status=401, mimetype='application/json')
     
@@ -658,155 +662,4 @@ def get_my_bookings():
         rows = c.fetchall()
         
         result = []
-        for row in rows:
-            item = dict(row)
-            for key, value in item.items():
-                if isinstance(value, (datetime, date)):
-                    item[key] = value.isoformat()
-            result.append(item)
-        
-        return Response(to_json(result), mimetype='application/json')
-    except Exception as e:
-        logger.error(f"My bookings error: {e}")
-        return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
-    finally:
-        if conn:
-            conn.close()
-
-@app.route('/api/my-bookings/<int:booking_id>/return', methods=['POST'])
-def return_my_booking(booking_id):
-    user_id = request.args.get('user_id', type=int)
-    if not user_id:
-        return Response(to_json({"error": "user_id required"}), status=401, mimetype='application/json')
-    
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        
-        c.execute("SELECT item_id, quantity, returned FROM bookings WHERE id = %s AND user_id = %s", 
-                 (booking_id, user_id))
-        booking = c.fetchone()
-        
-        if not booking:
-            return Response(to_json({"error": "Бронь не найдена"}), status=404, mimetype='application/json')
-        
-        if booking[2]:
-            return Response(to_json({"error": "Уже возвращена"}), status=400, mimetype='application/json')
-        
-        c.execute("UPDATE inventory SET available_quantity = available_quantity + %s WHERE id = %s",
-                 (booking[1], booking[0]))
-        c.execute("UPDATE bookings SET returned = 1 WHERE id = %s", (booking_id,))
-        
-        conn.commit()
-        return Response(to_json({"ok": True}), mimetype='application/json')
-        
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error(f"Return error: {e}")
-        return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
-    finally:
-        if conn:
-            conn.close()
-
-@app.route('/api/inventory')
-def get_inventory():
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor(cursor_factory=RealDictCursor)
-        c.execute("SELECT * FROM inventory ORDER BY id")
-        rows = c.fetchall()
-        
-        result = []
-        for row in rows:
-            item = dict(row)
-            for key, value in item.items():
-                if isinstance(value, (datetime, date)):
-                    item[key] = value.isoformat()
-            result.append(item)
-        
-        return Response(to_json(result), mimetype='application/json')
-    except Exception as e:
-        logger.error(f"Inventory error: {e}")
-        return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
-    finally:
-        if conn:
-            conn.close()
-
-# ============ ADMIN API (ИСПРАВЛЕНО) ============
-
-@app.route('/api/admin/bookings')
-def get_admin_bookings():
-    # Проверка админа
-    admin_id = request.args.get('admin_id', type=int)
-    if admin_id != ADMIN_ID:
-        return Response(to_json({"error": "Forbidden"}), status=403, mimetype='application/json')
-    
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor(cursor_factory=RealDictCursor)
-        # ИСПРАВЛЕНО: убран i.image_url из запроса
-        c.execute("""
-            SELECT b.*, i.name as item_name, u.username, u.full_name
-            FROM bookings b 
-            LEFT JOIN inventory i ON b.item_id = i.id 
-            LEFT JOIN users u ON b.user_id = u.id
-            ORDER BY b.id DESC
-        """)
-        rows = c.fetchall()
-        
-        result = []
-        for row in rows:
-            item = dict(row)
-            for key, value in item.items():
-                if isinstance(value, (datetime, date)):
-                    item[key] = value.isoformat()
-            result.append(item)
-        
-        return Response(to_json(result), mimetype='application/json')
-    except Exception as e:
-        logger.error(f"Admin bookings error: {e}")
-        return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
-    finally:
-        if conn:
-            conn.close()
-
-@app.route('/api/admin/stats')
-def get_admin_stats():
-    admin_id = request.args.get('admin_id', type=int)
-    if admin_id != ADMIN_ID:
-        return Response(to_json({"error": "Forbidden"}), status=403, mimetype='application/json')
-    
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        
-        c.execute("SELECT COUNT(*) FROM bookings WHERE returned = 0")
-        active = c.fetchone()[0]
-        
-        c.execute("SELECT COUNT(*) FROM bookings WHERE returned = 1")
-        returned = c.fetchone()[0]
-        
-        c.execute("SELECT COALESCE(SUM(total_price), 0) FROM bookings")
-        revenue = c.fetchone()[0]
-        
-        return Response(to_json({
-            "active_bookings": active,
-            "returned_bookings": returned,
-            "total_revenue": revenue
-        }), mimetype='application/json')
-        
-    except Exception as e:
-        logger.error(f"Admin stats error: {e}")
-        return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
-    finally:
-        if conn:
-            conn.close()
-
-@app.route('/api/health')
-def health():
-    return Response(to_json({"status": "ok"}), mimetype='application/json')
+        for

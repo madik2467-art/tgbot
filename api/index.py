@@ -662,4 +662,153 @@ def get_my_bookings():
         rows = c.fetchall()
         
         result = []
-        for
+        for row in rows:
+            item = dict(row)
+            for key, value in item.items():
+                if isinstance(value, (datetime, date)):
+                    item[key] = value.isoformat()
+            result.append(item)
+        
+        return Response(to_json(result), mimetype='application/json')
+    except Exception as e:
+        logger.error(f"My bookings error: {e}")
+        return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/my-bookings/<int:booking_id>/return', methods=['POST'])
+def return_my_booking(booking_id):
+    user_id = request.args.get('user_id', type=int)
+    if not user_id:
+        return Response(to_json({"error": "user_id required"}), status=401, mimetype='application/json')
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        c.execute("SELECT item_id, quantity, returned FROM bookings WHERE id = %s AND user_id = %s", 
+                 (booking_id, user_id))
+        booking = c.fetchone()
+        
+        if not booking:
+            return Response(to_json({"error": "Бронь не найдена"}), status=404, mimetype='application/json')
+        
+        if booking[2]:
+            return Response(to_json({"error": "Уже возвращена"}), status=400, mimetype='application/json')
+        
+        c.execute("UPDATE inventory SET available_quantity = available_quantity + %s WHERE id = %s",
+                 (booking[1], booking[0]))
+        c.execute("UPDATE bookings SET returned = 1 WHERE id = %s", (booking_id,))
+        
+        conn.commit()
+        return Response(to_json({"ok": True}), mimetype='application/json')
+        
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Return error: {e}")
+        return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/inventory')
+def get_inventory():
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        c.execute("SELECT * FROM inventory ORDER BY id")
+        rows = c.fetchall()
+        
+        result = []
+        for row in rows:
+            item = dict(row)
+            for key, value in item.items():
+                if isinstance(value, (datetime, date)):
+                    item[key] = value.isoformat()
+            result.append(item)
+        
+        return Response(to_json(result), mimetype='application/json')
+    except Exception as e:
+        logger.error(f"Inventory error: {e}")
+        return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
+    finally:
+        if conn:
+            conn.close()
+
+# ============ ADMIN API ============
+
+@app.route('/api/admin/bookings')
+def get_admin_bookings():
+    admin_id = request.args.get('admin_id', type=int)
+    if admin_id != ADMIN_ID:
+        return Response(to_json({"error": "Forbidden"}), status=403, mimetype='application/json')
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        # ИСПРАВЛЕНО: убран i.image_url
+        c.execute("""
+            SELECT b.*, i.name as item_name 
+            FROM bookings b 
+            LEFT JOIN inventory i ON b.item_id = i.id 
+            ORDER BY b.id DESC
+        """)
+        rows = c.fetchall()
+        
+        result = []
+        for row in rows:
+            item = dict(row)
+            for key, value in item.items():
+                if isinstance(value, (datetime, date)):
+                    item[key] = value.isoformat()
+            result.append(item)
+        
+        return Response(to_json(result), mimetype='application/json')
+    except Exception as e:
+        logger.error(f"Admin bookings error: {e}")
+        return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/admin/stats')
+def get_admin_stats():
+    admin_id = request.args.get('admin_id', type=int)
+    if admin_id != ADMIN_ID:
+        return Response(to_json({"error": "Forbidden"}), status=403, mimetype='application/json')
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        c.execute("SELECT COUNT(*) FROM bookings WHERE returned = 0")
+        active = c.fetchone()[0]
+        
+        c.execute("SELECT COUNT(*) FROM bookings WHERE returned = 1")
+        returned = c.fetchone()[0]
+        
+        c.execute("SELECT COALESCE(SUM(total_price), 0) FROM bookings")
+        revenue = c.fetchone()[0]
+        
+        return Response(to_json({
+            "active_bookings": active,
+            "returned_bookings": returned,
+            "total_revenue": revenue
+        }), mimetype='application/json')
+        
+    except Exception as e:
+        logger.error(f"Admin stats error: {e}")
+        return Response(to_json({"error": str(e)}), status=500, mimetype='application/json')
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/health')
+def health():
+    return Response(to_json({"status": "ok", "database": "connected" if DATABASE_URL else "not configured"}), mimetype='application/json')

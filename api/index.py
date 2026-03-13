@@ -1,4 +1,4 @@
-# api/index.py — ВЕРСИЯ С АДМИНКОЙ И ФОТО
+# api/index.py — Исправленная версия для Vercel
 from flask import Flask, request, Response
 import os
 import json
@@ -10,11 +10,11 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# CONFIG
+# Получаем URL из Environment Variables (без channel_binding!)
 DATABASE_URL = os.getenv('DATABASE_URL', '')
-ADMIN_ID = int(os.getenv('ADMIN_ID', '5243526187'))  # Добавьте в Environment Variables Vercel
-WEBAPP_URL = os.getenv('WEBAPP_URL', '')
+ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 
+# Убираем channel_binding если есть
 if 'channel_binding' in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.split('&channel_binding')[0]
 
@@ -83,23 +83,25 @@ def init_db():
         
         conn.commit()
         
-        # Заполняем данные с фото (Unsplash)
+        # Заполняем данные с фото
         items = [
-            ("Футбольный мяч", "футбол", 10, 10, 500, 2500, "https://images.unsplash.com/photo-1614632537190-23e4146777db?w=400"),
-            ("Теннисная ракетка", "теннис", 8, 8, 750, 4000, "https://images.unsplash.com/photo-1622279457486-62dcc4a431d6?w=400"),
-            ("Баскетбольный мяч", "баскетбол", 6, 6, 500, 2500, "https://images.unsplash.com/photo-1519861531473-9200262188bf?w=400"),
-            ("Горный велосипед", "вело", 4, 4, 1500, 7500, "https://images.unsplash.com/photo-1485965120184-e220f721d03e?w=400"),
-            ("Хоккейные коньки", "хоккей", 12, 12, 1000, 5000, "https://images.unsplash.com/photo-1565992441121-4367c2967103?w=400"),
-            ("Скейтборд", "скейт", 5, 5, 750, 3500, "https://images.unsplash.com/photo-1520045892732-304bc3ac5d8e?w=400"),
-            ("Роликовые коньки", "ролики", 15, 15, 750, 3500, "https://images.unsplash.com/photo-1566796195789-d5a59f97235b?w=400"),
-            ("Гантели 10 кг", "фитнес", 20, 20, 250, 1500, "https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?w=400"),
+            (1, "Футбольный мяч", "футбол", 10, 10, 500, 2500, "https://images.unsplash.com/photo-1614632537190-23e4146777db?w=400"),
+            (2, "Теннисная ракетка", "теннис", 8, 8, 750, 4000, "https://images.unsplash.com/photo-1622279457486-62dcc4a431d6?w=400"),
+            (3, "Баскетбольный мяч", "баскетбол", 6, 6, 500, 2500, "https://images.unsplash.com/photo-1519861531473-9200262188bf?w=400"),
+            (4, "Горный велосипед", "вело", 4, 4, 1500, 7500, "https://images.unsplash.com/photo-1485965120184-e220f721d03e?w=400"),
+            (5, "Хоккейные коньки", "хоккей", 12, 12, 1000, 5000, "https://images.unsplash.com/photo-1565992441121-4367c2967103?w=400"),
+            (6, "Скейтборд", "скейт", 5, 5, 750, 3500, "https://images.unsplash.com/photo-1520045892732-304bc3ac5d8e?w=400"),
+            (7, "Роликовые коньки", "ролики", 15, 15, 750, 3500, "https://images.unsplash.com/photo-1566796195789-d5a59f97235b?w=400"),
+            (8, "Гантели 10 кг", "фитнес", 20, 20, 250, 1500, "https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?w=400"),
         ]
         
         for item in items:
             c.execute('''
-                INSERT INTO inventory (name, sport, total_quantity, available_quantity, price_per_hour, price_per_day, image_url)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (name) DO UPDATE SET
+                INSERT INTO inventory (id, name, sport, total_quantity, available_quantity, price_per_hour, price_per_day, image_url)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    sport = EXCLUDED.sport,
                     total_quantity = EXCLUDED.total_quantity,
                     available_quantity = EXCLUDED.available_quantity,
                     price_per_hour = EXCLUDED.price_per_hour,
@@ -124,44 +126,51 @@ init_db()
 
 # ============ HTML СТРАНИЦЫ ============
 
-USER_PAGE = """
-<!DOCTYPE html>
+USER_PAGE = """<!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Мои брони</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 16px; }
+        * { box-sizing: border-box; }
+        body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 16px; min-height: 100vh; }
         .card { background: #1e293b; border-radius: 12px; padding: 16px; margin-bottom: 12px; border: 1px solid #334155; }
-        .btn { background: #7c3aed; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+        .btn { background: #7c3aed; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; }
         .btn:hover { background: #6d28d9; }
-        .item-name { font-weight: 600; color: white; }
+        .btn-secondary { background: #334155; }
+        .btn-secondary:hover { background: #475569; }
+        .item-name { font-weight: 600; color: white; font-size: 16px; }
         .price { color: #34d399; font-weight: bold; }
         .overdue { border-color: #ef4444 !important; background: rgba(239, 68, 68, 0.1) !important; }
         .tabs { display: flex; gap: 8px; margin-bottom: 16px; background: #1e293b; padding: 4px; border-radius: 8px; }
-        .tab { flex: 1; padding: 8px; text-align: center; border-radius: 6px; cursor: pointer; color: #94a3b8; }
+        .tab { flex: 1; padding: 10px; text-align: center; border-radius: 6px; cursor: pointer; color: #94a3b8; font-size: 14px; }
         .tab.active { background: #7c3aed; color: white; }
         .empty { text-align: center; padding: 40px; color: #64748b; }
         .error { background: #ef4444; color: white; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
         .user-info { background: #1e293b; padding: 12px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; color: #94a3b8; }
-        .catalog-btn { background: #334155; color: white; padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 16px; cursor: pointer; }
+        .catalog-btn { background: #334155; color: white; padding: 14px; border-radius: 8px; text-align: center; margin-bottom: 16px; cursor: pointer; font-weight: 500; }
         .catalog-btn:hover { background: #475569; }
+        #catalog-modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #0f172a; z-index: 1000; overflow-y: auto; padding: 16px; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; position: sticky; top: 0; background: #0f172a; padding: 10px 0; }
+        .close-btn { background: #334155; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+        .inventory-item { display: flex; gap: 16px; align-items: center; margin-bottom: 12px; }
+        .inventory-img { width: 80px; height: 80px; object-fit: cover; border-radius: 8px; flex-shrink: 0; }
+        .returned { opacity: 0.6; }
     </style>
 </head>
 <body>
     <div id="error" class="error" style="display: none;"></div>
     
     <div class="user-info">
-        👤 ID: <span id="user-id-display">-</span>
+        👤 ID: <span id="user-id">-</span>
     </div>
 
-    <h1 style="color: #a78bfa; margin-bottom: 20px;">Мои брони</h1>
+    <h1 style="color: #a78bfa; margin: 0 0 20px 0; font-size: 24px;">Мои брони</h1>
 
-    <div class="catalog-btn" onclick="showCatalog()">
-        📦 Посмотреть каталог
+    <div class="catalog-btn" onclick="openCatalog()">
+        📦 Каталог товаров
     </div>
 
     <div class="tabs">
@@ -173,26 +182,22 @@ USER_PAGE = """
         <div style="text-align: center; padding: 40px; color: #64748b;">Загрузка...</div>
     </div>
 
-    <!-- Модальное окно каталога -->
-    <div id="catalog-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 1000; overflow-y: auto;">
-        <div style="background: #0f172a; min-height: 100vh; padding: 16px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h2 style="color: #a78bfa; margin: 0;">Каталог</h2>
-                <button onclick="closeCatalog()" style="background: #334155; color: white; border: none; padding: 8px 16px; border-radius: 8px;">✕</button>
-            </div>
-            <div id="catalog-content"></div>
+    <div id="catalog-modal">
+        <div class="modal-header">
+            <h2 style="color: #a78bfa; margin: 0;">Каталог</h2>
+            <button class="close-btn" onclick="closeCatalog()">✕ Закрыть</button>
         </div>
+        <div id="catalog-list"></div>
     </div>
 
     <script>
         const urlParams = new URLSearchParams(window.location.search);
         const userId = urlParams.get('user_id');
+        document.getElementById('user-id').textContent = userId || 'не указан';
         
         if (!userId) {
             document.getElementById('error').style.display = 'block';
             document.getElementById('error').textContent = 'Ошибка: откройте через бота';
-        } else {
-            document.getElementById('user-id-display').textContent = userId;
         }
 
         let currentTab = 'active';
@@ -205,15 +210,16 @@ USER_PAGE = """
             setTimeout(() => el.style.display = 'none', 5000);
         }
 
-        async function loadMyBookings() {
+        async function loadBookings() {
             if (!userId) return;
             try {
-                const res = await fetch(`/api/my-bookings?user_id=${userId}`);
+                const res = await fetch('/api/my-bookings?user_id=' + userId);
                 if (!res.ok) throw new Error(await res.text());
-                myBookings = await res.json();
+                const data = await res.json();
+                myBookings = Array.isArray(data) ? data : [];
                 renderBookings();
             } catch (e) {
-                showError('Ошибка загрузки: ' + e.message);
+                showError('Ошибка: ' + e.message);
             }
         }
 
@@ -222,78 +228,66 @@ USER_PAGE = """
             const filtered = myBookings.filter(b => currentTab === 'active' ? !b.returned : b.returned);
 
             if (filtered.length === 0) {
-                container.innerHTML = `<div class="empty">Нет ${currentTab === 'active' ? 'активных' : 'завершенных'} бронирований</div>`;
+                container.innerHTML = '<div class="empty">Нет ' + (currentTab === 'active' ? 'активных' : 'завершенных') + ' броней</div>';
                 return;
             }
 
             container.innerHTML = filtered.map(b => {
                 const isOverdue = !b.returned && new Date(b.return_datetime) < new Date();
-                return `
-                <div class="card ${isOverdue ? 'overdue' : ''}">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                        <div>
-                            <div class="item-name">${escapeHtml(b.item_name)}</div>
-                            <div style="font-size: 12px; color: #64748b;">${b.quantity} шт. • ${b.duration} ${b.rent_type === 'hour' ? 'ч.' : 'дн.'}</div>
-                        </div>
-                        <div class="price">${b.total_price.toLocaleString()} ₸</div>
-                    </div>
-                    <div style="font-size: 12px; color: #94a3b8; margin-bottom: 8px;">
-                        ${b.booking_date} ${b.booking_time || ''}
-                    </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div style="font-size: 12px; ${isOverdue ? 'color: #ef4444; font-weight: bold;' : 'color: #64748b;'}">
-                            ${isOverdue ? '⚠️ Просрочено! ' : ''}
-                            ${b.returned ? '✅ Возвращено' : 'Возврат: ' + formatDate(b.return_datetime)}
-                        </div>
-                        ${!b.returned ? `<button class="btn" onclick="returnItem(${b.id})" style="font-size: 12px; padding: 6px 12px;">Вернуть</button>` : ''}
-                    </div>
-                </div>`;
+                return '<div class="card ' + (isOverdue ? 'overdue' : '') + ' ' + (b.returned ? 'returned' : '') + '">' +
+                    '<div style="display: flex; justify-content: space-between; margin-bottom: 8px;">' +
+                        '<div>' +
+                            '<div class="item-name">' + escapeHtml(b.item_name) + '</div>' +
+                            '<div style="font-size: 12px; color: #64748b;">' + b.quantity + ' шт. • ' + b.duration + ' ' + (b.rent_type === 'hour' ? 'ч.' : 'дн.') + '</div>' +
+                        '</div>' +
+                        '<div class="price">' + b.total_price.toLocaleString() + ' ₸</div>' +
+                    '</div>' +
+                    '<div style="font-size: 12px; color: #94a3b8; margin-bottom: 8px;">' + b.booking_date + ' ' + (b.booking_time || '') + '</div>' +
+                    '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+                        '<div style="font-size: 12px; ' + (isOverdue ? 'color: #ef4444; font-weight: bold;' : 'color: #64748b;') + '">' +
+                            (isOverdue ? '⚠️ Просрочено! ' : '') +
+                            (b.returned ? '✅ Возвращено' : 'Возврат: ' + formatDate(b.return_datetime)) +
+                        '</div>' +
+                        (!b.returned ? '<button class="btn" onclick="returnItem(' + b.id + ')" style="font-size: 12px; padding: 6px 12px;">Вернуть</button>' : '') +
+                    '</div>' +
+                '</div>';
             }).join('');
         }
 
-// В USER_PAGE замените функцию showCatalog:
-async function showCatalog() {
-    try {
-        const res = await fetch('/api/inventory');
-        if (!res.ok) throw new Error('Failed to load');
-        const items = await res.json();
-        const container = document.getElementById('catalog-content');
-        
-        if (!items || items.length === 0) {
-            container.innerHTML = '<div style="text-align: center; padding: 40px;">Каталог пуст</div>';
-        } else {
-            container.innerHTML = items.map(item => `
-                <div class="card" style="display: flex; gap: 16px; align-items: center; margin-bottom: 12px;">
-                    <img src="${item.image_url || 'https://via.placeholder.com/100?text=No+Image'}" 
-                         style="width: 100px; height: 100px; object-fit: cover; border-radius: 8px; flex-shrink: 0;" 
-                         onerror="this.src='https://via.placeholder.com/100?text=Error'">
-                    <div style="flex: 1;">
-                        <div style="font-weight: 600; font-size: 16px; margin-bottom: 4px;">${escapeHtml(item.name)}</div>
-                        <div style="font-size: 12px; color: #a78bfa; text-transform: uppercase; margin-bottom: 8px;">${item.sport}</div>
-                        <div style="display: flex; gap: 16px; font-size: 14px; margin-bottom: 4px;">
-                            <span style="color: #34d399;">${item.price_per_hour}₸/час</span>
-                            <span style="color: #34d399;">${item.price_per_day}₸/день</span>
-                        </div>
-                        <div style="font-size: 12px; color: ${item.available_quantity > 0 ? '#64748b' : '#ef4444'};">
-                            Доступно: ${item.available_quantity} из ${item.total_quantity}
-                        </div>
-                    </div>
-                </div>
-            `).join('');
+        async function openCatalog() {
+            try {
+                const res = await fetch('/api/inventory');
+                if (!res.ok) throw new Error('Failed to load');
+                const items = await res.json();
+                const container = document.getElementById('catalog-list');
+                
+                if (!items || items.length === 0) {
+                    container.innerHTML = '<div class="empty">Каталог пуст</div>';
+                } else {
+                    container.innerHTML = items.map(item => 
+                        '<div class="card inventory-item">' +
+                            '<img src="' + (item.image_url || 'https://via.placeholder.com/80') + '" class="inventory-img" onerror="this.src=\'https://via.placeholder.com/80\'">' +
+                            '<div style="flex: 1;">' +
+                                '<div class="item-name">' + escapeHtml(item.name) + '</div>' +
+                                '<div style="font-size: 12px; color: #a78bfa; text-transform: uppercase; margin: 4px 0;">' + item.sport + '</div>' +
+                                '<div style="font-size: 14px; color: #34d399; margin-bottom: 4px;">' + item.price_per_hour + '₸/час • ' + item.price_per_day + '₸/день</div>' +
+                                '<div style="font-size: 12px; color: ' + (item.available_quantity > 0 ? '#64748b' : '#ef4444') + ';">Доступно: ' + item.available_quantity + '/' + item.total_quantity + '</div>' +
+                            '</div>' +
+                        '</div>'
+                    ).join('');
+                }
+                
+                document.getElementById('catalog-modal').style.display = 'block';
+                document.body.style.overflow = 'hidden';
+            } catch (e) {
+                showError('Ошибка каталога: ' + e.message);
+            }
         }
-        
-        document.getElementById('catalog-modal').style.display = 'block';
-        document.body.style.overflow = 'hidden';
-    } catch (e) {
-        console.error('Catalog error:', e);
-        showError('Ошибка загрузки каталога: ' + e.message);
-    }
-}
 
-function closeCatalog() {
-    document.getElementById('catalog-modal').style.display = 'none';
-    document.body.style.overflow = 'auto';
-}
+        function closeCatalog() {
+            document.getElementById('catalog-modal').style.display = 'none';
+            document.body.style.overflow = 'auto';
+        }
 
         function switchTab(tab) {
             currentTab = tab;
@@ -303,13 +297,16 @@ function closeCatalog() {
         }
 
         async function returnItem(bookingId) {
-            if (!confirm('Подтвердить возврат?')) return;
+            if (!confirm('Вернуть товар?')) return;
             try {
-                const res = await fetch(`/api/my-bookings/${bookingId}/return?user_id=${userId}`, { method: 'POST' });
-                if (!res.ok) throw new Error((await res.json()).error);
-                await loadMyBookings();
+                const res = await fetch('/api/my-bookings/' + bookingId + '/return?user_id=' + userId, { method: 'POST' });
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.error || 'Ошибка');
+                }
+                await loadBookings();
             } catch (e) {
-                showError('Ошибка: ' + e.message);
+                showError('Ошибка возврата: ' + e.message);
             }
         }
 
@@ -327,15 +324,13 @@ function closeCatalog() {
             } catch(e) { return dt; }
         }
 
-        loadMyBookings();
-        setInterval(loadMyBookings, 10000);
+        loadBookings();
+        setInterval(loadBookings, 10000);
     </script>
 </body>
-</html>
-"""
+</html>"""
 
-ADMIN_PAGE = """
-<!DOCTYPE html>
+ADMIN_PAGE = """<!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
@@ -343,6 +338,7 @@ ADMIN_PAGE = """
     <title>Админ панель</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        * { box-sizing: border-box; }
         body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 16px; }
         .card { background: #1e293b; border-radius: 12px; padding: 16px; margin-bottom: 12px; border: 1px solid #334155; }
         .btn { background: #7c3aed; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
@@ -350,61 +346,60 @@ ADMIN_PAGE = """
         .btn-danger { background: #dc2626; }
         .btn-danger:hover { background: #b91c1c; }
         .tabs { display: flex; gap: 8px; margin-bottom: 16px; background: #1e293b; padding: 4px; border-radius: 8px; overflow-x: auto; }
-        .tab { flex: 1; padding: 8px; text-align: center; border-radius: 6px; cursor: pointer; color: #94a3b8; white-space: nowrap; }
+        .tab { flex: 1; padding: 10px; text-align: center; border-radius: 6px; cursor: pointer; color: #94a3b8; font-size: 14px; white-space: nowrap; }
         .tab.active { background: #dc2626; color: white; }
+        .stat-card { background: #1e293b; border-radius: 12px; padding: 16px; text-align: center; border: 1px solid #334155; }
+        .stat-value { font-size: 28px; font-weight: bold; color: #a78bfa; }
+        .stat-label { font-size: 12px; color: #64748b; margin-top: 4px; }
         .user-card { background: #1e293b; border-radius: 12px; padding: 16px; margin-bottom: 12px; border: 1px solid #334155; cursor: pointer; }
         .user-card:hover { border-color: #7c3aed; }
         .overdue { border-color: #ef4444 !important; background: rgba(239, 68, 68, 0.1) !important; }
-        .stat-card { background: #1e293b; border-radius: 12px; padding: 16px; text-align: center; border: 1px solid #334155; }
-        .stat-value { font-size: 24px; font-weight: bold; color: #a78bfa; }
-        .back-btn { background: #334155; color: white; padding: 8px 16px; border-radius: 8px; cursor: pointer; margin-bottom: 16px; display: inline-block; }
+        .back-btn { background: #334155; color: white; padding: 10px 20px; border-radius: 8px; cursor: pointer; margin-bottom: 16px; display: inline-block; border: none; }
         .hidden { display: none !important; }
+        .inventory-img { width: 60px; height: 60px; object-fit: cover; border-radius: 8px; }
     </style>
 </head>
 <body>
-    <h1 style="color: #dc2626; margin-bottom: 20px;">🔴 Админ панель</h1>
+    <h1 style="color: #dc2626; margin: 0 0 20px 0;">🔴 Админ панель</h1>
 
-    <!-- Статистика -->
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px;" id="stats">
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 20px;">
         <div class="stat-card">
             <div class="stat-value" id="stat-revenue">0</div>
-            <div style="font-size: 12px; color: #64748b;">Выручка</div>
+            <div class="stat-label">Выручка</div>
         </div>
         <div class="stat-card">
             <div class="stat-value" id="stat-active">0</div>
-            <div style="font-size: 12px; color: #64748b;">Активные</div>
+            <div class="stat-label">Активные</div>
         </div>
         <div class="stat-card">
             <div class="stat-value" id="stat-overdue" style="color: #ef4444;">0</div>
-            <div style="font-size: 12px; color: #64748b;">Просрочено</div>
+            <div class="stat-label">Просрочено</div>
         </div>
         <div class="stat-card">
             <div class="stat-value" id="stat-users">0</div>
-            <div style="font-size: 12px; color: #64748b;">Пользователи</div>
+            <div class="stat-label">Пользователи</div>
         </div>
     </div>
 
-    <!-- Табы -->
     <div class="tabs">
         <div class="tab active" onclick="switchTab('users')">Пользователи</div>
-        <div class="tab" onclick="switchTab('all-bookings')">Все брони</div>
+        <div class="tab" onclick="switchTab('bookings')">Все брони</div>
         <div class="tab" onclick="switchTab('inventory')">Склад</div>
     </div>
 
-    <!-- Контент -->
-    <div id="content"></div>
-
-    <!-- Детали пользователя -->
-    <div id="user-details" class="hidden">
-        <div class="back-btn" onclick="backToUsers()">← Назад к списку</div>
-        <h2 id="user-title" style="color: #a78bfa; margin-bottom: 16px;"></h2>
-        <div id="user-bookings"></div>
+    <div id="main-content"></div>
+    
+    <div id="user-detail" class="hidden">
+        <button class="back-btn" onclick="backToList()">← Назад</button>
+        <h2 id="detail-title" style="color: #a78bfa; margin: 0 0 16px 0;"></h2>
+        <div id="detail-content"></div>
     </div>
 
     <script>
         let currentTab = 'users';
         let allBookings = [];
-        let allUsers = [];
+        let usersList = [];
+        let currentUserId = null;
 
         async function loadData() {
             try {
@@ -414,116 +409,112 @@ ADMIN_PAGE = """
                 ]);
                 
                 const stats = await statsRes.json();
-                allBookings = await bookingsRes.json();
+                const bookingsData = await bookingsRes.json();
+                allBookings = Array.isArray(bookingsData) ? bookingsData : [];
                 
                 // Группируем по пользователям
                 const userMap = {};
                 allBookings.forEach(b => {
                     if (!userMap[b.user_id]) {
-                        userMap[b.user_id] = {
-                            user_id: b.user_id,
-                            bookings: [],
-                            total_spent: 0,
-                            active_count: 0
-                        };
+                        userMap[b.user_id] = { user_id: b.user_id, bookings: [], total: 0, active: 0 };
                     }
                     userMap[b.user_id].bookings.push(b);
-                    userMap[b.user_id].total_spent += b.total_price;
-                    if (!b.returned) userMap[b.user_id].active_count++;
+                    userMap[b.user_id].total += b.total_price;
+                    if (!b.returned) userMap[b.user_id].active++;
                 });
-                allUsers = Object.values(userMap);
+                usersList = Object.values(userMap);
                 
-                // Обновляем статистику
-                document.getElementById('stat-revenue').textContent = stats.total_revenue.toLocaleString() + ' ₸';
-                document.getElementById('stat-active').textContent = stats.active_bookings;
-                document.getElementById('stat-overdue').textContent = stats.overdue_bookings;
-                document.getElementById('stat-users').textContent = allUsers.length;
+                document.getElementById('stat-revenue').textContent = (stats.total_revenue || 0).toLocaleString() + ' ₸';
+                document.getElementById('stat-active').textContent = stats.active_bookings || 0;
+                document.getElementById('stat-overdue').textContent = stats.overdue_bookings || 0;
+                document.getElementById('stat-users').textContent = usersList.length;
                 
-                renderContent();
+                if (currentUserId) {
+                    showUserDetail(currentUserId);
+                } else {
+                    renderMain();
+                }
             } catch (e) {
-                document.getElementById('content').innerHTML = '<div style="color: #ef4444;">Ошибка загрузки: ' + e.message + '</div>';
+                document.getElementById('main-content').innerHTML = '<div style="color: #ef4444;">Ошибка загрузки</div>';
             }
         }
 
-        function renderContent() {
+        function renderMain() {
             if (currentTab === 'users') renderUsers();
-            else if (currentTab === 'all-bookings') renderAllBookings();
+            else if (currentTab === 'bookings') renderAllBookings();
             else if (currentTab === 'inventory') renderInventory();
         }
 
         function renderUsers() {
-            const container = document.getElementById('content');
-            if (allUsers.length === 0) {
-                container.innerHTML = '<div style="text-align: center; padding: 40px; color: #64748b;">Нет пользователей</div>';
+            const container = document.getElementById('main-content');
+            if (usersList.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 40px; color: #64748b;">Нет данных</div>';
                 return;
             }
             
-            container.innerHTML = allUsers.map(u => {
+            container.innerHTML = usersList.map(u => {
                 const hasOverdue = u.bookings.some(b => !b.returned && new Date(b.return_datetime) < new Date());
-                return `
-                <div class="user-card ${hasOverdue ? 'overdue' : ''}" onclick="showUserDetails(${u.user_id})">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <div style="font-weight: 600; color: white;">Пользователь #${u.user_id}</div>
-                            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">
-                                Броней: ${u.bookings.length} | Активных: ${u.active_count}
-                            </div>
-                        </div>
-                        <div style="text-align: right;">
-                            <div style="color: #34d399; font-weight: bold;">${u.total_spent.toLocaleString()} ₸</div>
-                            ${hasOverdue ? '<div style="color: #ef4444; font-size: 12px;">⚠️ Просрочка</div>' : ''}
-                        </div>
-                    </div>
-                </div>`;
+                return '<div class="user-card ' + (hasOverdue ? 'overdue' : '') + '" onclick="showUserDetail(' + u.user_id + ')">' +
+                    '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+                        '<div>' +
+                            '<div style="font-weight: 600; color: white;">Пользователь #' + u.user_id + '</div>' +
+                            '<div style="font-size: 12px; color: #64748b; margin-top: 4px;">Броней: ' + u.bookings.length + ' | Активных: ' + u.active + '</div>' +
+                        '</div>' +
+                        '<div style="text-align: right;">' +
+                            '<div style="color: #34d399; font-weight: bold;">' + u.total.toLocaleString() + ' ₸</div>' +
+                            (hasOverdue ? '<div style="color: #ef4444; font-size: 12px;">⚠️ Просрочка</div>' : '') +
+                        '</div>' +
+                    '</div>' +
+                '</div>';
             }).join('');
         }
 
-        function showUserDetails(userId) {
-            const user = allUsers.find(u => u.user_id === userId);
+        function showUserDetail(userId) {
+            currentUserId = userId;
+            const user = usersList.find(u => u.user_id === userId);
             if (!user) return;
             
-            document.getElementById('content').classList.add('hidden');
-            document.getElementById('user-details').classList.remove('hidden');
-            document.getElementById('user-title').textContent = `Пользователь #${userId}`;
+            document.getElementById('main-content').classList.add('hidden');
+            document.getElementById('user-detail').classList.remove('hidden');
+            document.getElementById('detail-title').textContent = 'Пользователь #' + userId;
             
-            const container = document.getElementById('user-bookings');
+            const container = document.getElementById('detail-content');
             if (user.bookings.length === 0) {
-                container.innerHTML = '<div style="text-align: center; padding: 40px; color: #64748b;">Нет бронирований</div>';
+                container.innerHTML = '<div style="text-align: center; padding: 40px; color: #64748b;">Нет броней</div>';
                 return;
             }
             
             container.innerHTML = user.bookings.map(b => {
                 const isOverdue = !b.returned && new Date(b.return_datetime) < new Date();
-                return `
-                <div class="card ${isOverdue ? 'overdue' : ''} ${b.returned ? 'opacity-50' : ''}">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                        <div>
-                            <div style="font-weight: 600;">${escapeHtml(b.item_name)}</div>
-                            <div style="font-size: 12px; color: #64748b;">${b.quantity} шт. • ${b.duration} ${b.rent_type === 'hour' ? 'ч.' : 'дн.'}</div>
-                        </div>
-                        <div style="color: #34d399; font-weight: bold;">${b.total_price.toLocaleString()} ₸</div>
-                    </div>
-                    <div style="font-size: 12px; color: #94a3b8; margin-bottom: 8px;">
-                        ${b.booking_date} ${b.booking_time || ''}
-                    </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div style="font-size: 12px; ${isOverdue ? 'color: #ef4444; font-weight: bold;' : 'color: #64748b;'}">
-                            ${isOverdue ? '⚠️ Просрочено! ' : ''}
-                            ${b.returned ? '✅ Возвращено' : 'Возврат: ' + formatDate(b.return_datetime)}
-                        </div>
-                        ${!b.returned ? `<button class="btn btn-danger" onclick="adminReturn(${b.id}, ${userId})">Вернуть</button>` : ''}
-                    </div>
-                </div>`;
+                return '<div class="card ' + (isOverdue ? 'overdue' : '') + '">' +
+                    '<div style="display: flex; justify-content: space-between; margin-bottom: 8px;">' +
+                        '<div>' +
+                            '<div style="font-weight: 600;">' + escapeHtml(b.item_name) + '</div>' +
+                            '<div style="font-size: 12px; color: #64748b;">' + b.quantity + ' шт. • ' + b.duration + ' ' + (b.rent_type === 'hour' ? 'ч.' : 'дн.') + '</div>' +
+                        '</div>' +
+                        '<div style="color: #34d399; font-weight: bold;">' + b.total_price.toLocaleString() + ' ₸</div>' +
+                    '</div>' +
+                    '<div style="font-size: 12px; color: #94a3b8; margin-bottom: 8px;">' + b.booking_date + '</div>' +
+                    '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+                        '<div style="font-size: 12px; ' + (isOverdue ? 'color: #ef4444; font-weight: bold;' : 'color: #64748b;') + '">' +
+                            (isOverdue ? '⚠️ Просрочено! ' : '') +
+                            (b.returned ? '✅ Возвращено' : 'Возврат: ' + formatDate(b.return_datetime)) +
+                        '</div>' +
+                        (!b.returned ? '<button class="btn btn-danger" onclick="adminReturn(' + b.id + ')">Вернуть</button>' : '') +
+                    '</div>' +
+                '</div>';
             }).join('');
         }
 
-        function backToUsers() {
-            document.getElementById('user-details').classList.add('hidden');
-            document.getElementById('content').classList.remove('hidden');
+        function backToList() {
+            currentUserId = null;
+            document.getElementById('user-detail').classList.add('hidden');
+            document.getElementById('main-content').classList.remove('hidden');
+            renderMain();
         }
 
         function renderAllBookings() {
-            const container = document.getElementById('content');
+            const container = document.getElementById('main-content');
             const active = allBookings.filter(b => !b.returned);
             
             if (active.length === 0) {
@@ -533,62 +524,57 @@ ADMIN_PAGE = """
             
             container.innerHTML = active.map(b => {
                 const isOverdue = new Date(b.return_datetime) < new Date();
-                return `
-                <div class="card ${isOverdue ? 'overdue' : ''}">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                        <div>
-                            <div style="font-weight: 600;">${escapeHtml(b.item_name)}</div>
-                            <div style="font-size: 12px; color: #64748b;">Пользователь #${b.user_id}</div>
-                        </div>
-                        <div style="color: #34d399; font-weight: bold;">${b.total_price.toLocaleString()} ₸</div>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div style="font-size: 12px; ${isOverdue ? 'color: #ef4444;' : 'color: #64748b;'}">
-                            ${isOverdue ? '⚠️ ' : ''}Возврат: ${formatDate(b.return_datetime)}
-                        </div>
-                        <button class="btn btn-danger" onclick="adminReturn(${b.id}, ${b.user_id})">Вернуть</button>
-                    </div>
-                </div>`;
+                return '<div class="card ' + (isOverdue ? 'overdue' : '') + '">' +
+                    '<div style="display: flex; justify-content: space-between; margin-bottom: 8px;">' +
+                        '<div>' +
+                            '<div style="font-weight: 600;">' + escapeHtml(b.item_name) + '</div>' +
+                            '<div style="font-size: 12px; color: #64748b;">Пользователь #' + b.user_id + '</div>' +
+                        '</div>' +
+                        '<div style="color: #34d399; font-weight: bold;">' + b.total_price.toLocaleString() + ' ₸</div>' +
+                    '</div>' +
+                    '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+                        '<div style="font-size: 12px; ' + (isOverdue ? 'color: #ef4444;' : 'color: #64748b;') + '">' +
+                            (isOverdue ? '⚠️ ' : '') + 'Возврат: ' + formatDate(b.return_datetime) +
+                        '</div>' +
+                        '<button class="btn btn-danger" onclick="adminReturn(' + b.id + ')">Вернуть</button>' +
+                    '</div>' +
+                '</div>';
             }).join('');
         }
 
         async function renderInventory() {
-            const container = document.getElementById('content');
+            const container = document.getElementById('main-content');
             try {
                 const res = await fetch('/api/inventory');
                 const items = await res.json();
                 
-                container.innerHTML = items.map(item => `
-                    <div class="card" style="display: flex; gap: 16px; align-items: center;">
-                        <img src="${item.image_url || 'https://via.placeholder.com/80'}" 
-                             style="width: 80px; height: 80px; object-fit: cover; border-radius: 8px;"
-                             onerror="this.src='https://via.placeholder.com/80'">
-                        <div style="flex: 1;">
-                            <div style="font-weight: 600;">${escapeHtml(item.name)}</div>
-                            <div style="font-size: 12px; color: #a78bfa; margin-bottom: 4px;">${item.sport}</div>
-                            <div style="font-size: 14px; color: #34d399;">
-                                ${item.price_per_hour}₸/ч | ${item.price_per_day}₸/день
-                            </div>
-                            <div style="font-size: 12px; color: ${item.available_quantity > 0 ? '#64748b' : '#ef4444'};">
-                                Доступно: ${item.available_quantity}/${item.total_quantity}
-                            </div>
-                        </div>
-                    </div>
-                `).join('');
+                container.innerHTML = items.map(item => 
+                    '<div class="card" style="display: flex; gap: 16px; align-items: center;">' +
+                        '<img src="' + (item.image_url || 'https://via.placeholder.com/60') + '" class="inventory-img" onerror="this.src=\'https://via.placeholder.com/60\'">' +
+                        '<div style="flex: 1;">' +
+                            '<div style="font-weight: 600;">' + escapeHtml(item.name) + '</div>' +
+                            '<div style="font-size: 12px; color: #a78bfa;">' + item.sport + '</div>' +
+                            '<div style="font-size: 14px; color: #34d399;">' + item.price_per_hour + '₸/ч | ' + item.price_per_day + '₸/день</div>' +
+                            '<div style="font-size: 12px; color: ' + (item.available_quantity > 0 ? '#64748b' : '#ef4444') + ';">' +
+                                'Доступно: ' + item.available_quantity + '/' + item.total_quantity +
+                            '</div>' +
+                        '</div>' +
+                    '</div>'
+                ).join('');
             } catch (e) {
-                container.innerHTML = '<div style="color: #ef4444;">Ошибка загрузки</div>';
+                container.innerHTML = '<div style="color: #ef4444;">Ошибка загрузки склада</div>';
             }
         }
 
-        async function adminReturn(bookingId, userId) {
+        async function adminReturn(bookingId) {
             if (!confirm('Подтвердить возврат?')) return;
             try {
-                const res = await fetch(`/api/admin/bookings/${bookingId}/return`, { method: 'POST' });
-                if (!res.ok) throw new Error((await res.json()).error);
-                await loadData();
-                if (!document.getElementById('user-details').classList.contains('hidden')) {
-                    showUserDetails(userId);
+                const res = await fetch('/api/admin/bookings/' + bookingId + '/return', { method: 'POST' });
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.error);
                 }
+                await loadData();
             } catch (e) {
                 alert('Ошибка: ' + e.message);
             }
@@ -598,9 +584,7 @@ ADMIN_PAGE = """
             currentTab = tab;
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             event.target.classList.add('active');
-            document.getElementById('user-details').classList.add('hidden');
-            document.getElementById('content').classList.remove('hidden');
-            renderContent();
+            backToList();
         }
 
         function escapeHtml(text) {
@@ -621,24 +605,19 @@ ADMIN_PAGE = """
         setInterval(loadData, 10000);
     </script>
 </body>
-</html>
-"""
+</html>"""
 
 # ============ ROUTES ============
 
 @app.route('/')
 def index():
     user_id = request.args.get('user_id', type=int)
-    if user_id == ADMIN_ID:
-        return ADMIN_PAGE  # Админ видит админку
-    return USER_PAGE  # Обычный пользователь
+    if user_id and user_id == ADMIN_ID:
+        return ADMIN_PAGE
+    return USER_PAGE
 
 @app.route('/admin')
-def admin_page():
-    """Прямой доступ к админке по /admin?key=SECRET"""
-    key = request.args.get('key')
-    if key != os.getenv('ADMIN_KEY', 'secret123'):
-        return "Доступ запрещен", 403
+def admin_direct():
     return ADMIN_PAGE
 
 # ============ USER API ============
@@ -687,23 +666,20 @@ def return_my_booking(booking_id):
     conn = None
     try:
         conn = get_db()
-        c = conn.cursor(cursor_factory=RealDictCursor)
+        c = conn.cursor()
         
-        c.execute("""
-            SELECT item_id, quantity, returned 
-            FROM bookings 
-            WHERE id = %s AND user_id = %s
-        """, (booking_id, user_id))
-        
+        c.execute("SELECT item_id, quantity, returned FROM bookings WHERE id = %s AND user_id = %s", 
+                 (booking_id, user_id))
         booking = c.fetchone()
+        
         if not booking:
             return Response(to_json({"error": "Бронь не найдена"}), status=404, mimetype='application/json')
         
-        if booking['returned']:
+        if booking[2]:  # returned
             return Response(to_json({"error": "Уже возвращена"}), status=400, mimetype='application/json')
         
         c.execute("UPDATE inventory SET available_quantity = available_quantity + %s WHERE id = %s",
-                 (booking['quantity'], booking['item_id']))
+                 (booking[1], booking[0]))
         c.execute("UPDATE bookings SET returned = 1 WHERE id = %s", (booking_id,))
         
         conn.commit()
@@ -725,23 +701,23 @@ def admin_stats():
     conn = None
     try:
         conn = get_db()
-        c = conn.cursor(cursor_factory=RealDictCursor)
+        c = conn.cursor()
         
-        c.execute("SELECT COALESCE(SUM(total_price), 0) as rev FROM bookings WHERE returned = 0")
-        revenue = c.fetchone()['rev']
+        c.execute("SELECT COALESCE(SUM(total_price), 0) FROM bookings WHERE returned = 0")
+        revenue = c.fetchone()[0]
         
-        c.execute("SELECT COUNT(*) as cnt FROM bookings WHERE returned = 0")
-        active = c.fetchone()['cnt']
+        c.execute("SELECT COUNT(*) FROM bookings WHERE returned = 0")
+        active = c.fetchone()[0]
         
         now = datetime.now().isoformat()
-        c.execute("SELECT COUNT(*) as cnt FROM bookings WHERE returned = 0 AND return_datetime < %s", (now,))
-        overdue = c.fetchone()['cnt']
+        c.execute("SELECT COUNT(*) FROM bookings WHERE returned = 0 AND return_datetime < %s", (now,))
+        overdue = c.fetchone()[0]
         
-        c.execute("SELECT COUNT(DISTINCT user_id) as cnt FROM bookings")
-        users = c.fetchone()['cnt']
+        c.execute("SELECT COUNT(DISTINCT user_id) FROM bookings")
+        users = c.fetchone()[0]
         
         return Response(to_json({
-            "total_revenue": float(revenue),
+            "total_revenue": float(revenue or 0),
             "active_bookings": active,
             "overdue_bookings": overdue,
             "total_users": users
@@ -784,11 +760,11 @@ def admin_bookings():
             conn.close()
 
 @app.route('/api/admin/bookings/<int:booking_id>/return', methods=['POST'])
-def admin_return_booking(booking_id):
+def admin_return(booking_id):
     conn = None
     try:
         conn = get_db()
-        c = conn.cursor(cursor_factory=RealDictCursor)
+        c = conn.cursor()
         
         c.execute("SELECT item_id, quantity, returned FROM bookings WHERE id = %s", (booking_id,))
         booking = c.fetchone()
@@ -796,11 +772,11 @@ def admin_return_booking(booking_id):
         if not booking:
             return Response(to_json({"error": "Бронь не найдена"}), status=404, mimetype='application/json')
         
-        if booking['returned']:
+        if booking[2]:
             return Response(to_json({"error": "Уже возвращена"}), status=400, mimetype='application/json')
         
         c.execute("UPDATE inventory SET available_quantity = available_quantity + %s WHERE id = %s",
-                 (booking['quantity'], booking['item_id']))
+                 (booking[1], booking[0]))
         c.execute("UPDATE bookings SET returned = 1 WHERE id = %s", (booking_id,))
         
         conn.commit()
@@ -843,5 +819,3 @@ def get_inventory():
 @app.route('/api/health')
 def health():
     return Response(to_json({"status": "ok"}), mimetype='application/json')
-
-

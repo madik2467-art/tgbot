@@ -50,6 +50,7 @@ def init_db():
         conn = get_db()
         c = conn.cursor()
         
+        # Создаём таблицу inventory (если нет)
         c.execute('''
             CREATE TABLE IF NOT EXISTS inventory (
                 id SERIAL PRIMARY KEY,
@@ -63,6 +64,14 @@ def init_db():
             )
         ''')
         
+        # ДОБАВЛЯЕМ: проверяем и добавляем колонку image_url если её нет
+        try:
+            c.execute("SELECT image_url FROM inventory LIMIT 1")
+        except:
+            c.execute("ALTER TABLE inventory ADD COLUMN image_url TEXT DEFAULT ''")
+            logger.info("Added image_url column")
+        
+        # Создаём таблицу bookings
         c.execute('''
             CREATE TABLE IF NOT EXISTS bookings (
                 id SERIAL PRIMARY KEY,
@@ -121,8 +130,6 @@ def init_db():
     finally:
         if conn:
             conn.close()
-
-init_db()
 
 # ============ HTML СТРАНИЦЫ ============
 
@@ -819,3 +826,4 @@ def get_inventory():
 @app.route('/api/health')
 def health():
     return Response(to_json({"status": "ok"}), mimetype='application/json')
+
